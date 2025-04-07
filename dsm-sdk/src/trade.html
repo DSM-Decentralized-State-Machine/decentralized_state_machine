@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DSM Vault Interaction UI with Bluetooth Sync</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-6 font-sans">
+  <div class="max-w-3xl mx-auto space-y-8">
+    <!-- Bluetooth Sync Notification -->
+    <div class="bg-blue-100 border border-blue-300 text-blue-800 rounded-lg p-4 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <!-- Bluetooth Icon (simplified) -->
+        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.5 6.5l11 11m0-11l-11 11"/>
+        </svg>
+        <span>Bluetooth Sync in progress...</span>
+      </div>
+      <button class="bg-blue-600 text-white px-3 py-1 rounded-md">View Details</button>
+    </div>
+
+    <!-- Initial Offer -->
+    <div class="bg-white rounded-2xl shadow p-6">
+      <h2 class="text-xl font-semibold mb-2">New Trade Offer</h2>
+      <p class="text-gray-700 mb-4">
+        Alice wants to trade her <strong>Fire Pokémon</strong> for your <strong>Water Pokémon</strong>.
+      </p>
+      <div class="space-x-2">
+        <button class="bg-green-500 text-white px-4 py-2 rounded-xl shadow">Accept</button>
+        <button class="bg-red-500 text-white px-4 py-2 rounded-xl shadow">Decline</button>
+        <button class="bg-yellow-500 text-white px-4 py-2 rounded-xl shadow">Counter Offer</button>
+      </div>
+    </div>
+
+    <!-- Counter Offer Editor -->
+    <div class="bg-white rounded-2xl shadow p-6">
+      <h2 class="text-xl font-semibold mb-2">Counter Offer</h2>
+      <p class="text-gray-600 mb-2">Modify the trade and send your proposal back to Alice.</p>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Select your Pokémon:</label>
+      <select class="w-full border rounded-xl p-2 mb-4">
+        <option>Ice Pokémon</option>
+        <option>Electric Pokémon</option>
+        <option>Grass Pokémon</option>
+      </select>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Message:</label>
+      <textarea class="w-full border rounded-xl p-2 mb-4" rows="2">Would you take an Ice Pokémon instead?</textarea>
+      <button class="bg-blue-600 text-white px-4 py-2 rounded-xl shadow">Send Counter Offer</button>
+    </div>
+
+    <!-- Finalize Offer (Initiator's View) -->
+    <div class="bg-white rounded-2xl shadow p-6">
+      <h2 class="text-xl font-semibold mb-2">Counter Offer Received</h2>
+      <p class="text-gray-700 mb-2">
+        Bob has proposed to trade his <strong>Ice Pokémon</strong> instead of Water Pokémon.
+      </p>
+      <p class="text-gray-600 text-sm italic mb-4">
+        "Would you take an Ice Pokémon instead?"
+      </p>
+      <div class="space-x-2">
+        <button class="bg-green-500 text-white px-4 py-2 rounded-xl shadow">Accept Counter</button>
+        <button class="bg-red-500 text-white px-4 py-2 rounded-xl shadow">Reject</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

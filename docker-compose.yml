@@ -1,0 +1,294 @@
+version: '3.8'
+
+# Docker Compose configuration for DSM distributed runtime environment
+# Implements a full system with quantum-resistant state machine, storage nodes, and Ethereum bridge
+
+x-logging: &default-logging
+  options:
+    max-size: "20m"
+    max-file: "5"
+  driver: json-file
+
+services:
+  # Core DSM node implementing the state machine and CTPA verification
+  dsm-core:
+    build:
+      context: .
+      dockerfile: dsm/Dockerfile
+    image: dsm/core:latest
+    container_name: dsm-core
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - dsm-core-data:/var/lib/dsm/data
+      - dsm-core-config:/var/lib/dsm/config
+      - dsm-core-policies:/var/lib/dsm/policies
+    ports:
+      - "7545:7545"  # API port
+      - "8765:8765"  # P2P communication
+    environment:
+      - DSM_LOG_LEVEL=info
+      - DSM_RUNTIME_MODE=production
+      - DSM_CONNECT_PEERS=dsm-storage-primary:8765,dsm-storage-replica:8765
+      - RUST_BACKTRACE=1
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cli", "status", "--json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    # Prevent start until storage nodes are ready
+    depends_on:
+      dsm-storage-primary:
+        condition: service_healthy
+      dsm-storage-replica:
+        condition: service_healthy
+    # Enforced as non-root user in Dockerfile
+    # Securing abilites to only required ones
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+
+  # Primary storage node for decentralized policy and state storage
+  dsm-storage-primary:
+    build:
+      context: .
+      dockerfile: dsm-storage-node/Dockerfile
+    image: dsm/storage-node:latest
+    container_name: dsm-storage-primary
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - dsm-storage-primary-data:/var/lib/dsm-storage/data
+      - dsm-storage-primary-config:/var/lib/dsm-storage/config
+    ports:
+      - "8766:8765"  # P2P port (external)
+    environment:
+      - DSM_STORAGE_NODE_ID=primary
+      - DSM_STORAGE_REPLICATION_FACTOR=2
+      - DSM_STORAGE_LOG_LEVEL=info
+      - RUST_BACKTRACE=1
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/storage-cli", "status", "--json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  # Replica storage node for redundancy and high availability
+  dsm-storage-replica:
+    build:
+      context: .
+      dockerfile: dsm-storage-node/Dockerfile
+    image: dsm/storage-node:latest
+    container_name: dsm-storage-replica
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - dsm-storage-replica-data:/var/lib/dsm-storage/data
+      - dsm-storage-replica-config:/var/lib/dsm-storage/config
+    ports:
+      - "8767:8765"  # P2P port (external)
+    environment:
+      - DSM_STORAGE_NODE_ID=replica
+      - DSM_STORAGE_REPLICATION_FACTOR=2
+      - DSM_STORAGE_LOG_LEVEL=info
+      - DSM_STORAGE_SYNC_WITH=dsm-storage-primary:8765
+      - RUST_BACKTRACE=1
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/storage-cli", "status", "--json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    # Depends on primary for initial synchronization
+    depends_on:
+      - dsm-storage-primary
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  # Ethereum bridge for interoperability with EVM-compatible chains
+  dsm-ethereum-bridge:
+    build:
+      context: .
+      dockerfile: dsm-ethereum-bridge/Dockerfile
+    image: dsm/ethereum-bridge:latest
+    container_name: dsm-ethereum-bridge
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - dsm-bridge-data:/var/lib/dsm-bridge/data
+      - dsm-bridge-config:/var/lib/dsm-bridge/config
+    ports:
+      - "8768:8768"  # Bridge API port
+    environment:
+      - DSM_BRIDGE_LOG_LEVEL=info
+      - DSM_BRIDGE_ETHEREUM_RPC=${ETHEREUM_RPC_URL:-https://network.example.com/v2/YOUR_API_KEY_PLACEHOLDER}
+      - DSM_BRIDGE_DSM_NODE=dsm-core:7545
+      - DSM_BRIDGE_CONFIRMATION_BLOCKS=6
+      - DSM_BRIDGE_MODE=production
+      - RUST_BACKTRACE=1
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/bridge-cli", "status", "--json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    depends_on:
+      - dsm-core
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  # Monitoring services for system health and metrics
+  prometheus:
+    image: prom/prometheus:v2.46.0
+    container_name: dsm-prometheus
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - prometheus-data:/prometheus
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    user: "65534:65534"  # nobody:nogroup
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: dsm-grafana
+    restart: unless-stopped
+    networks:
+      - dsm-network
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-PLEASE_CHANGE_THIS_PASSWORD}
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    user: "472:472"  # grafana:grafana
+    depends_on:
+      - prometheus
+    read_only: false  # Grafana needs to write to its database
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  dsm-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+    driver_opts:
+      com.docker.network.bridge.name: dsm-net
+      com.docker.network.driver.mtu: 1500
+    # Enhance network security
+    name: dsm-network
+    attachable: false
+    enable_ipv6: false
+
+volumes:
+  # Core node volumes
+  dsm-core-data:
+    driver: local
+  dsm-core-config:
+    driver: local
+  dsm-core-policies:
+    driver: local
+  
+  # Primary storage node volumes
+  dsm-storage-primary-data:
+    driver: local
+  dsm-storage-primary-config:
+    driver: local
+  
+  # Replica storage node volumes
+  dsm-storage-replica-data:
+    driver: local
+  dsm-storage-replica-config:
+    driver: local
+  
+  # Ethereum bridge volumes
+  dsm-bridge-data:
+    driver: local
+  dsm-bridge-config:
+    driver: local
+  
+  # Monitoring volumes
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

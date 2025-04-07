@@ -1,0 +1,37 @@
+# Configuration for automatic labeling of PRs based on paths
+
+core:
+- dsm/src/core/**/*
+
+crypto:
+- dsm/src/crypto/**/*
+- dsm/src/crypto_verification/**/*
+
+storage:
+- dsm-storage-node/**/*
+
+ethereum:
+- dsm-ethereum-bridge/**/*
+
+sdk:
+- dsm-sdk/**/*
+
+documentation:
+- '**/*.md'
+- docs/**/*
+
+ci-cd:
+- .github/**/*
+- '*.toml'
+- '.cargo/**/*'
+
+tests:
+- '**/tests/**/*'
+- '**/*_test.rs'
+- '**/*_tests.rs'
+
+configuration:
+- '**/config/**/*'
+- '**/*.toml'
+- '**/*.yml'
+- '**/*.yaml'

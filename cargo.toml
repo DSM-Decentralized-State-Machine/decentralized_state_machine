@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "dsm",
+    "dsm-storage-node",
+    "dsm-ethereum-bridge",
+    "dsm-sdk",
+]
+resolver = "2"
+
+[profile.dev]
+overflow-checks = true
+opt-level = 0
+debug = true
+
+[profile.release]
+overflow-checks = true  # Enabling overflow checks

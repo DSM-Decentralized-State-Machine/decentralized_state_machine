@@ -1,0 +1,180 @@
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+// use dsm::core::state_machine::StateMachine;
+use dsm::types::operations::Operation;
+use dsm::types::state_types::{DeviceInfo, SparseIndex, State, StateParams};
+use std::mem::{size_of, size_of_val};
+
+mod bench;
+
+/// Profiles memory consumption characteristics of DSM's cryptographic state objects.
+///
+/// This benchmark systematically measures memory footprint of state objects
+/// throughout their evolution chain, providing critical metrics for deployment
+/// scenarios where memory constraints are significant (IoT, embedded contexts).
+fn memory_footprint_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Memory Footprint");
+
+    // Create consistent test environment for memory profiling
+    dsm::initialize();
+
+    // Profile base state object size
+    group.bench_function("state_base_size", |b| {
+        b.iter_with_setup(create_genesis_state, |state| black_box(size_of_val(&state)))
+    });
+
+    // Profile state chain growth for different evolution depths
+    for &states in &[10, 50, 100, 500] {
+        group.bench_with_input(
+            BenchmarkId::new("chain_memory_growth", states),
+            &states,
+            |b, &state_count| {
+                b.iter_with_setup(
+                    || generate_state_chain(state_count),
+                    |chain| {
+                        // Calculate total memory consumption including all internal references
+                        let mut total_size = 0;
+                        for state in chain {
+                            total_size += deep_size(&state);
+                        }
+                        // Return average state size for consistent comparison
+                        black_box(total_size / state_count as usize)
+                    },
+                )
+            },
+        );
+    }
+
+    // Measure serialized state size (critical for network transmission)
+    group.bench_function("serialized_state_size", |b| {
+        b.iter_with_setup(
+            || {
+                // Create a state with representative complexity
+                let state_chain = generate_state_chain(10);
+                state_chain.last().unwrap().clone()
+            },
+            |state| {
+                // Measure both bincode and postcard serialization sizes
+                let bincode_size = bincode::serialize(&state).unwrap().len();
+                let postcard_size = postcard::to_allocvec(&state).unwrap().len();
+                black_box((bincode_size, postcard_size))
+            },
+        )
+    });
+
+    group.finish();
+}
+
+/// Calculate approximate deep size of a state including all owned allocations
+fn deep_size(state: &State) -> usize {
+    let mut size = size_of_val(state);
+
+    // Account for heap-allocated vectors within the state
+    size += state.entropy.capacity();
+    size += state.hash.capacity();
+    size += state.prev_state_hash.capacity();
+
+    // Account for sparse index entries
+    // Access indices directly
+    size += state.sparse_index.indices.capacity() * size_of::<u64>();
+
+    // Account for operation size
+    match &state.operation {
+        Operation::Generic {
+            operation_type,
+            data,
+        } => {
+            size += operation_type.capacity();
+            size += data.capacity();
+        }
+        Operation::Transfer {
+            recipient,
+            token_id,
+            to,
+            to_address,
+            ..
+        } => {
+            size += recipient.capacity();
+            size += token_id.capacity();
+            size += to.capacity();
+            size += to_address.capacity();
+        }
+        // Add other operation variants as needed
+        _ => {}
+    }
+
+    // Account for device info
+    size += state.device_info.device_id.capacity();
+    size += state.device_info.public_key.capacity();
+
+    // Account for forward commitment if present
+    // Skip forward commitment calculation as it's a private field
+    // and we don't have a getter method available
+
+    size
+}
+
+/// Creates a representative genesis state for memory profiling
+fn create_genesis_state() -> State {
+    let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+    let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+    let computed_hash = genesis.compute_hash().unwrap();
+    genesis.hash = computed_hash;
+    genesis
+}
+
+/// Generate a chain of states with realistic evolution characteristics
+fn generate_state_chain(length: u64) -> Vec<State> {
+    let genesis = create_genesis_state();
+    let mut states = Vec::with_capacity(length as usize + 1);
+    states.push(genesis.clone());
+
+    let mut current_state = genesis;
+
+    for i in 0..length {
+        let operation = Operation::Generic {
+            operation_type: format!("op_{}", i),
+            data: vec![i as u8; 4],
+        };
+
+        let next_entropy = dsm::crypto::blake3::generate_deterministic_entropy(
+            &current_state.entropy,
+            &bincode::serialize(&operation).unwrap(),
+            current_state.state_number + 1,
+        )
+        .as_bytes()
+        .to_vec();
+
+        let indices = State::calculate_sparse_indices(i + 1).unwrap();
+        let sparse_index = SparseIndex::new(indices);
+
+        let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+
+        let state_params = StateParams {
+            state_number: i + 1,
+            entropy: next_entropy,
+            encapsulated_entropy: None,
+            prev_state_hash: current_state.hash().unwrap(),
+            sparse_index,
+            operation,
+            device_info,
+            forward_commitment: None,
+            matches_parameters: bool::default(),
+        };
+
+        let mut next_state = State::new(state_params);
+        let computed_hash = next_state.compute_hash().unwrap();
+        next_state.hash = computed_hash;
+
+        states.push(next_state.clone());
+        current_state = next_state;
+    }
+
+    states
+}
+
+criterion_group! {
+    name = benches;
+    config = bench::configure_criterion("memory_profile")();
+    targets = memory_footprint_benchmark
+}
+criterion_main!(benches);

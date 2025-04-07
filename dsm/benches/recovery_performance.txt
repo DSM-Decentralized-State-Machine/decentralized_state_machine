@@ -1,0 +1,400 @@
+use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use dsm::core::state_machine::StateMachine;
+use dsm::crypto::sphincs::{generate_sphincs_keypair, sphincs_sign, sphincs_verify};
+use dsm::recovery::invalidation::RecoveryManager;
+use dsm::types::operations::Operation;
+use dsm::types::state_types::{DeviceInfo, State};
+use rand::{thread_rng, Rng};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+mod bench;
+
+/// Benchmark recovery and key restoration operations for the DSM system.
+///
+/// This benchmark suite quantifies critical disaster recovery performance metrics,
+/// including mnemonic seed derivation, state reconstruction, and operational
+/// restoration times. Performance in these scenarios is critical for establishing
+/// mean-time-to-recovery (MTTR) guarantees in production environments.
+fn recovery_benchmark(c: &mut Criterion) {
+    dsm::initialize();
+
+    let mut group = c.benchmark_group("Recovery Performance");
+    group.sample_size(30); // Lower sample count due to higher operation complexity
+    group.measurement_time(Duration::from_secs(10));
+
+    // Benchmark mnemonic phrase generation performance
+    group.bench_function("mnemonic_generation", |b| {
+        b.iter(|| {
+            let mnemonic = generate_test_mnemonic(128); // 12-word phrase
+            black_box(mnemonic)
+        })
+    });
+
+    // Benchmark key derivation from mnemonic performance
+    group.bench_function("key_derivation", |b| {
+        b.iter_with_setup(
+            || generate_test_mnemonic(128),
+            |mnemonic| {
+                let entropy = mnemonic_to_entropy(&mnemonic);
+                let (master_key, _fingerprint) = derive_master_key(&entropy);
+                black_box(master_key)
+            },
+        )
+    });
+
+    // Benchmark full identity reconstruction from mnemonic
+    group.bench_function("full_identity_reconstruction", |b| {
+        b.iter_with_setup(
+            || {
+                // Create a recovery manager
+                let recovery_manager = Arc::new(Mutex::new(RecoveryManager::new(3))); // Set threshold to 3
+
+                // Generate source mnemonic and state machine
+                let mnemonic = generate_test_mnemonic(128);
+                let entropy = mnemonic_to_entropy(&mnemonic);
+
+                // Derive identity components
+                let (master_key, _fingerprint) = derive_master_key(&entropy);
+                let device_key = derive_device_key(&master_key, 0); // First device key
+
+                // Create a state machine with this identity
+                let state_machine = create_state_machine_from_key(&device_key);
+
+                // Add some state transitions to make reconstruction non-trivial
+                for i in 0..5 {
+                    let op = Operation::Generic {
+                        operation_type: format!("recovery_op_{}", i),
+                        data: vec![i as u8; 4],
+                        message: todo!(),
+                    };
+
+                    let _ = state_machine.execute_transition(op);
+                }
+
+                // Cache a reference state for verification
+                let reference_state = state_machine.current_state().unwrap().clone();
+
+                // Return all components needed for benchmark
+                (mnemonic, recovery_manager, reference_state)
+            },
+            |(mnemonic, recovery_manager, reference_state)| {
+                // Perform complete identity reconstruction
+                let entropy = mnemonic_to_entropy(&mnemonic);
+                let (master_key, _) = derive_master_key(&entropy);
+
+                // Lock recovery manager for thread safety
+                let _manager = recovery_manager.lock().unwrap();
+
+                // Register recovery data
+                // Create new state machine directly since recovery methods aren't available
+                let device_key = derive_device_key(&master_key, 0);
+                let state_machine = create_state_machine_from_key(&device_key);
+
+                // Verify state machine matches reference state
+                assert!(state_machine.current_state().unwrap().hash == reference_state.hash);
+
+                black_box(state_machine)
+            },
+        )
+    });
+
+    // Benchmark recovery from partial state
+    group.bench_function("partial_state_recovery", |b| {
+        b.iter_with_setup(
+            || {
+                // Setup a state machine with history
+                let mut state_machine = StateMachine::new();
+                let device_info = DeviceInfo::new("recovery_device", vec![1, 2, 3, 4]);
+                let genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+                state_machine.set_state(genesis);
+
+                // Generate a sequence of states
+                let states = Vec::new();
+
+                for i in 0..20 {
+                    let op = Operation::Generic {
+                        operation_type: format!("recovery_op_{}", i),
+                        data: vec![i as u8; 4],
+                        message: todo!(),
+                    };
+
+                    let new_state = state_machine.execute_transition(op).unwrap();
+                    states.push(new_state);
+                }
+
+                // Choose a midpoint state for recovery
+                let midpoint_state = states[10].clone();
+
+                // Return components needed for benchmark
+                (
+                    state_machine,
+                    midpoint_state,
+                    states.last().unwrap().clone(),
+                )
+            },
+            |(mut state_machine, midpoint_state, last_state)| {
+                // Reset state machine to midpoint
+                state_machine.set_state(midpoint_state);
+
+                // Recover remaining states using available operations
+                for i in 11..20 {
+                    let op = Operation::Generic {
+                        operation_type: format!("recovery_op_{}", i),
+                        data: vec![i as u8; 4],
+                        message: todo!(),
+                    };
+
+                    let _ = state_machine.execute_transition(op);
+                }
+
+                // Verify recovery was successful by comparing with last state
+                assert_eq!(state_machine.current_state().unwrap().hash, last_state.hash);
+
+                black_box(state_machine)
+            },
+        )
+    });
+
+    // Benchmark key recovery from compromised device
+    group.bench_function("compromised_device_recovery", |b| {
+        b.iter_with_setup(
+            || {
+                // Generate recovery data
+                let entropy = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+                let (original_master, fingerprint) = derive_master_key(&entropy);
+                let original_device_key = derive_device_key(&original_master, 0);
+
+                // Create original state machine
+                let original_machine = create_state_machine_from_key(&original_device_key);
+
+                // Add some state transitions
+                for i in 0..5 {
+                    let op = Operation::Generic {
+                        operation_type: format!("original_op_{}", i),
+                        data: vec![i as u8; 4],
+                        message: todo!(),
+                    };
+
+                    let _ = original_machine.execute_transition(op);
+                }
+
+                // Capture the last valid state before compromise
+                let last_valid_state = original_machine.current_state().unwrap().clone();
+
+                // Simulate device compromise by creating new device key
+                let compromised_device_key = derive_device_key(&original_master, 1);
+
+                (
+                    entropy,
+                    fingerprint,
+                    last_valid_state,
+                    compromised_device_key,
+                )
+            },
+            |(entropy, fingerprint, last_valid_state, new_device_key)| {
+                // Perform emergency key recovery
+                let (_recovered_master, recovered_fingerprint) = derive_master_key(&entropy);
+
+                // Verify master fingerprint matches
+                assert_eq!(fingerprint, recovered_fingerprint);
+
+                // Create new state machine with recovered key
+                let mut new_machine = create_state_machine_from_key(&new_device_key);
+
+                // Initialize with last known valid state
+                new_machine.set_state(last_valid_state);
+
+                // Execute a recovery operation to confirm operational status
+                let recovery_op = Operation::Generic {
+                    operation_type: "post_recovery_op".to_string(),
+                    data: vec![0xAA, 0xBB, 0xCC, 0xDD],
+                    message: todo!(),
+                };
+
+                let new_state = new_machine.execute_transition(recovery_op).unwrap();
+
+                black_box((new_machine, new_state))
+            },
+        )
+    });
+
+    // Add benchmarks for parallel recovery operations
+    let thread_counts = [1, 2, 4];
+
+    for &threads in &thread_counts {
+        group.bench_with_input(
+            BenchmarkId::new("parallel_key_recovery", threads),
+            &threads,
+            |b, &thread_count| {
+                b.iter_with_setup(
+                    || {
+                        // Generate recovery seeds for all threads
+                        let seeds = (0..thread_count)
+                            .map(|_| generate_test_mnemonic(128))
+                            .collect::<Vec<String>>();
+
+                        seeds
+                    },
+                    |seeds| {
+                        // Launch recovery operations in parallel
+                        let handles = seeds
+                            .iter()
+                            .map(|seed| {
+                                let seed_clone = seed.clone();
+
+                                std::thread::spawn(move || {
+                                    let entropy = mnemonic_to_entropy(&seed_clone);
+                                    let (master_key, _fingerprint) = derive_master_key(&entropy);
+                                    let device_key = derive_device_key(&master_key, 0);
+
+                                    // Create state machine and verify
+                                    let machine = create_state_machine_from_key(&device_key);
+
+                                    // Add a single state to verify functionality
+                                    let op = Operation::Generic {
+                                        operation_type: "recovery_verify".to_string(),
+                                        data: vec![0xAA, 0xBB, 0xCC, 0xDD],
+                                        message: todo!(),
+                                    };
+
+                                    let new_state = machine.execute_transition(op).unwrap();
+                                    (machine, new_state)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+
+                        // Wait for all threads to complete
+                        let results = handles
+                            .into_iter()
+                            .map(|h| h.join().unwrap())
+                            .collect::<Vec<_>>();
+
+                        black_box(results)
+                    },
+                )
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark signature recovery for a compromised system
+fn signature_recovery_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Signature Recovery");
+
+    // Benchmark SPHINCS+ key recovery and signature validation
+    group.bench_function("sphincs_key_recovery", |b| {
+        b.iter_with_setup(
+            || {
+                // Generate SPHINCS+ keypair
+                let (pk, sk) = generate_sphincs_keypair();
+
+                // Sign test message
+                let message = b"Test message for signature recovery benchmark";
+                let signature = sphincs_sign(&sk, message).unwrap();
+
+                // Create backup of public key (simulating recovery data)
+                let pk_backup = pk.clone();
+
+                (pk_backup, message.to_vec(), signature)
+            },
+            |(recovered_pk, message, signature)| {
+                // Validate signature with recovered public key
+                let is_valid = sphincs_verify(&recovered_pk, &message, &signature).unwrap();
+                assert!(is_valid);
+
+                black_box(is_valid)
+            },
+        )
+    });
+
+    group.finish();
+}
+
+// Helper functions for recovery benchmarks
+
+/// Generate test mnemonic phrase with specified entropy bits
+fn generate_test_mnemonic(entropy_bits: usize) -> String {
+    // Generate random entropy
+    let byte_count = entropy_bits / 8;
+    let mut entropy = vec![0u8; byte_count];
+    thread_rng().fill(&mut entropy[..]);
+
+    // Convert entropy to mnemonic
+    let mnemonic = bip39::Mnemonic::from_entropy(&entropy).unwrap();
+    mnemonic.to_string()
+}
+
+/// Convert mnemonic to entropy bytes
+fn mnemonic_to_entropy(mnemonic: &str) -> Vec<u8> {
+    let mnemonic = bip39::Mnemonic::parse(mnemonic).unwrap();
+    mnemonic.to_entropy().to_vec()
+}
+
+/// Derive master key and fingerprint from entropy
+fn derive_master_key(entropy: &[u8]) -> (Vec<u8>, u32) {
+    // This is a simplified version - the actual implementation would use HMAC-SHA512
+    // and proper key derivation paths according to BIP32/39/44
+
+    // Create a master key by hashing entropy (simulation)
+    let master_key = {
+        let mut hasher = ::blake3::Hasher::new();
+        hasher.update(entropy);
+        hasher.update(b"master_key");
+        hasher.finalize().as_bytes().to_vec()
+    };
+
+    // Create fingerprint for verification
+    let fingerprint = {
+        let mut hasher = ::blake3::Hasher::new();
+        hasher.update(&master_key);
+        let result = hasher.finalize();
+        let bytes = result.as_bytes();
+        ((bytes[0] as u32) << 24)
+            | ((bytes[1] as u32) << 16)
+            | ((bytes[2] as u32) << 8)
+            | (bytes[3] as u32)
+    };
+
+    (master_key, fingerprint)
+}
+
+/// Derive device-specific key from master key
+fn derive_device_key(master_key: &[u8], device_index: u32) -> Vec<u8> {
+    // In a real implementation, this would follow BIP32 derivation paths
+    let mut hasher = ::blake3::Hasher::new();
+    hasher.update(master_key);
+    hasher.update(&device_index.to_le_bytes());
+    hasher.update(b"device_key");
+    hasher.finalize().as_bytes().to_vec()
+}
+
+/// Create a state machine from derived device key
+fn create_state_machine_from_key(device_key: &[u8]) -> StateMachine {
+    let mut state_machine = StateMachine::new();
+
+    // Create device info from key
+    let device_id = format!("recovered_device_{}", hex::encode(&device_key[0..4]));
+    let device_info = DeviceInfo::new(&device_id, device_key.to_vec());
+
+    // Create genesis state with this device identity
+    let mut genesis = State::new_genesis(device_key[4..20].to_vec(), device_info);
+
+    // Compute and set hash for genesis state
+    let hash = genesis.compute_hash().unwrap();
+    genesis.hash = hash;
+
+    // Set state
+    state_machine.set_state(genesis);
+
+    state_machine
+}
+
+criterion_group! {
+    name = benches;
+    config = bench::configure_criterion("recovery_performance")();
+    targets = recovery_benchmark, signature_recovery_benchmark
+}
+

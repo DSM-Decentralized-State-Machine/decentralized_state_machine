@@ -1,0 +1,670 @@
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use tokio::net::UdpSocket;
+use tokio::sync::RwLock;
+use tokio::time::timeout;
+
+/// Represents a network address.
+pub enum NetworkAddress {
+    Socket(std::net::SocketAddr),
+}
+
+const PROTOCOL_VERSION: u32 = 1; // Defined locally as a u32 constant
+use dsm::communication::crypto_net::{
+    CommunicationNonce, DebugCryptoProvider, KyberCryptoProvider,
+};
+use dsm::communication::{TransportConnection, TransportListener, TransportType};
+// Removed unused generate_nonce import.
+use dsm::types::error::DsmError;
+
+use async_trait::async_trait;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use sha3::{
+    digest::{ExtendableOutput, Update, XofReader},
+    Shake256,
+};
+
+// For post-quantum key exchange, we now use pqcrypto_mlkem (as suggested by the error messages)
+
+const MAX_UDP_PACKET_SIZE: usize = 65507;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS: u64 = 5000; // 5 seconds
+const ENCRYPTED_OVERHEAD: usize = 16; // ChaCha20Poly1305 overhead
+const MAX_TIME_DIFF_SECS: u64 = 30; // Maximum allowed time difference for handshake
+
+/// Represents a keypair from our post-quantum crypto provider.
+pub struct KeyPair {
+    pub public: Vec<u8>,
+    pub private_key: Vec<u8>,
+}
+
+/// Authentication data for messages
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct AuthData {
+    connection_id: u64,
+    message_type: u8,
+}
+
+impl AuthData {
+    fn to_bytes(self) -> [u8; 9] {
+        let mut result = [0u8; 9];
+        result[0..8].copy_from_slice(&self.connection_id.to_be_bytes());
+        result[8] = self.message_type;
+        result
+    }
+}
+
+/// Message types for UDP framing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum UdpMessageType {
+    Handshake = 0,
+    HandshakeResponse = 1,
+    Data = 2,
+    KeepAlive = 3,
+    Close = 4,
+}
+
+/// Handshake message structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HandshakeMessage {
+    version: u32,
+    timestamp: u64,
+    nonce: [u8; 32],
+    public_key: Vec<u8>,
+}
+
+/// Local state for handshake process
+#[allow(dead_code)]
+#[derive(Debug)]
+struct HandshakeState {
+    sent_msg: HandshakeMessage,
+    received_msg: Option<HandshakeMessage>,
+    completed: bool,
+}
+
+/// Secure UDP transport implementation with built-in post-quantum key exchange.
+/// This transport does not hold a socket itself; sockets are created per connection.
+pub struct SecureUdpTransport {
+    crypto_provider: Arc<dyn DebugCryptoProvider>,
+    active_connections: Arc<RwLock<HashMap<SocketAddr, SecureUdpConnectionState>>>,
+}
+
+impl SecureUdpTransport {
+    pub async fn connect(
+        &self,
+        addr: &NetworkAddress,
+    ) -> Result<Box<dyn TransportConnection>, DsmError> {
+        // Create local UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(|e| DsmError::network(format!("Failed to bind UDP socket: {}", e), Some(e)))?;
+        let local_addr = socket.local_addr().map_err(|e| {
+            DsmError::network(format!("Failed to get local address: {}", e), Some(e))
+        })?;
+
+        // Resolve remote address from NetworkAddress enum
+        let remote_addr = match addr {
+            NetworkAddress::Socket(s) => *s,
+        };
+
+        // Generate connection ID
+        let connection_id = Self::generate_connection_id();
+
+        // Generate keypair using crypto provider (our keypair for this connection)
+        let keypair = self.crypto_provider.generate_keypair()?; // returns KeyPair
+
+        // Create handshake message
+        let handshake_msg = HandshakeMessage {
+            version: PROTOCOL_VERSION,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            nonce: Self::generate_nonce()?,
+            public_key: keypair.public_key.clone(),
+        };
+
+        // Serialize handshake message
+        let msg_bytes = bincode::serialize(&handshake_msg).map_err(|e| {
+            DsmError::serialization("Failed to serialize handshake message", Some(e))
+        })?;
+
+        // Send handshake message to remote
+        socket.send_to(&msg_bytes, remote_addr).await.map_err(|e| {
+            DsmError::network(format!("Failed to send handshake message: {}", e), Some(e))
+        })?;
+
+        // Wait for handshake response with timeout
+        let mut buf = [0u8; MAX_UDP_PACKET_SIZE];
+        let (n, resp_addr) = timeout(
+            Duration::from_millis(DEFAULT_HANDSHAKE_TIMEOUT_MS),
+            socket.recv_from(&mut buf),
+        )
+        .await
+        .map_err(|_| DsmError::network("Handshake timeout", None::<std::io::Error>))??;
+
+        if resp_addr != remote_addr {
+            return Err(DsmError::network(
+                format!("Received response from unexpected address: {}", resp_addr),
+                None::<std::io::Error>,
+            ));
+        }
+
+        // Deserialize handshake response
+        let response: HandshakeMessage = bincode::deserialize(&buf[..n]).map_err(|e| {
+            DsmError::serialization("Failed to deserialize handshake response", Some(e))
+        })?;
+
+        // Validate response
+        if response.version != PROTOCOL_VERSION {
+            return Err(DsmError::network(
+                "Protocol version mismatch",
+                None::<std::io::Error>,
+            ));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(response.timestamp) > MAX_TIME_DIFF_SECS {
+            return Err(DsmError::network(
+                "Handshake response timestamp too old",
+                None::<std::io::Error>,
+            ));
+        }
+        if response.nonce == handshake_msg.nonce {
+            return Err(DsmError::network(
+                "Nonce in handshake response is identical to our nonce",
+                None::<std::io::Error>,
+            ));
+        }
+
+        // Derive shared secret using our private key and peer's public key
+        let session_key = self
+            .crypto_provider
+            .derive_shared_secret(&keypair.private_key, &response.public_key)?;
+
+        // Derive session keys using SHAKE256-based KDF.
+        // For demonstration, generate a new nonce for our side.
+        let our_nonce = Self::generate_nonce()?;
+        let peer_nonce = response.nonce;
+        let (enc_key, mac_key) = Self::derive_session_keys(
+            &session_key,
+            &keypair.public_key,
+            &response.public_key,
+            &our_nonce,
+            &peer_nonce,
+        )?;
+
+        // Create connection state and store it
+        let conn_state = SecureUdpConnectionState::new(connection_id, session_key.clone());
+        {
+            let mut connections = self.active_connections.write().await;
+            connections.insert(remote_addr, conn_state);
+        }
+
+        // Return the connection wrapped in a SecureUdpConnection instance.
+        Ok(Box::new(SecureUdpConnection {
+            socket: Arc::new(socket),
+            remote_addr,
+            local_addr,
+            connection_id,
+            crypto_provider: self.crypto_provider.clone(),
+            shared_secret: session_key,
+            next_nonce: AtomicU64::new(0),
+            active_connections: self.active_connections.clone(),
+            enc_key,
+            mac_key,
+            peer_public_key: response.public_key,
+        }))
+    }
+
+    pub async fn bind(&self, addr: SocketAddr) -> Result<Box<dyn TransportListener>, DsmError> {
+        let socket = UdpSocket::bind(addr)
+            .await
+            .map_err(|e| DsmError::network(format!("Failed to bind UDP socket: {}", e), Some(e)))?;
+        let local_addr = socket.local_addr().map_err(|e| {
+            DsmError::network(format!("Failed to get local address: {}", e), Some(e))
+        })?;
+        Ok(Box::new(SecureUdpListener {
+            socket: Arc::new(socket),
+            local_addr,
+            crypto_provider: self.crypto_provider.clone(),
+            active_connections: self.active_connections.clone(),
+            pending_connections: Arc::new(RwLock::new(HashMap::new())),
+        }))
+    }
+
+    fn generate_connection_id() -> u64 {
+        let mut rng = OsRng;
+        rng.next_u64()
+    }
+
+    fn derive_session_keys(
+        shared_secret: &[u8],
+        our_pub: &[u8],
+        peer_pub: &[u8],
+        our_nonce: &[u8; 32],
+        peer_nonce: &[u8; 32],
+    ) -> Result<([u8; 32], [u8; 32]), DsmError> {
+        let mut shake = Shake256::default();
+        shake.update(shared_secret);
+        shake.update(our_nonce);
+        shake.update(peer_nonce);
+        shake.update(our_pub);
+        shake.update(peer_pub);
+        let mut okm = [0u8; 64];
+        let mut reader = shake.finalize_xof();
+        reader.read(&mut okm);
+        let mut enc_key = [0u8; 32];
+        let mut mac_key = [0u8; 32];
+        enc_key.copy_from_slice(&okm[0..32]);
+        mac_key.copy_from_slice(&okm[32..64]);
+        Ok((enc_key, mac_key))
+    }
+}
+
+impl SecureUdpTransport {
+    pub fn init() -> Result<Self, DsmError> {
+        let crypto_provider = Arc::new(KyberCryptoProvider::new());
+        Ok(Self {
+            crypto_provider,
+            active_connections: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    fn generate_nonce() -> Result<[u8; 32], DsmError> {
+        let mut nonce = [0u8; 32];
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut nonce);
+        Ok(nonce)
+    }
+}
+
+#[derive(Debug)]
+pub struct SecureUdpConnection {
+    socket: Arc<UdpSocket>,
+    remote_addr: SocketAddr,
+    local_addr: SocketAddr,
+    connection_id: u64,
+    crypto_provider: Arc<dyn DebugCryptoProvider>,
+    shared_secret: Vec<u8>,
+    next_nonce: AtomicU64,
+    active_connections: Arc<RwLock<HashMap<SocketAddr, SecureUdpConnectionState>>>,
+    enc_key: [u8; 32],
+    mac_key: [u8; 32],
+    peer_public_key: Vec<u8>,
+}
+
+impl Clone for SecureUdpConnection {
+    fn clone(&self) -> Self {
+        Self {
+            socket: self.socket.clone(),
+            remote_addr: self.remote_addr,
+            local_addr: self.local_addr,
+            connection_id: self.connection_id,
+            crypto_provider: self.crypto_provider.clone(),
+            shared_secret: self.shared_secret.clone(),
+            next_nonce: AtomicU64::new(self.next_nonce.load(Ordering::SeqCst)),
+            active_connections: self.active_connections.clone(),
+            enc_key: self.enc_key,
+            mac_key: self.mac_key,
+            peer_public_key: self.peer_public_key.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl TransportConnection for SecureUdpConnection {
+    async fn send(&self, data: &[u8]) -> Result<(), DsmError> {
+        if data.len() > MAX_UDP_PACKET_SIZE - ENCRYPTED_OVERHEAD - 9 {
+            return Err(DsmError::validation(
+                format!(
+                    "Message too large for UDP: {} bytes (max {})",
+                    data.len(),
+                    MAX_UDP_PACKET_SIZE - ENCRYPTED_OVERHEAD - 9
+                ),
+                None::<std::io::Error>,
+            ));
+        }
+        let nonce_value = self.next_nonce.fetch_add(1, Ordering::SeqCst);
+        let nonce = CommunicationNonce::from_u64(nonce_value);
+        let auth_data = AuthData {
+            connection_id: self.connection_id,
+            message_type: UdpMessageType::Data as u8,
+        }
+        .to_bytes();
+        let encrypted =
+            self.crypto_provider
+                .encrypt(&self.shared_secret, &nonce, data, &auth_data)?;
+        let mut message = Vec::with_capacity(auth_data.len() + encrypted.len());
+        message.extend_from_slice(&auth_data);
+        message.extend_from_slice(&encrypted);
+        self.socket
+            .send_to(&message, self.remote_addr)
+            .await
+            .map_err(|e| DsmError::network(format!("Failed to send data: {}", e), Some(e)))?;
+        {
+            let mut connections = self.active_connections.write().await;
+            if let Some(state) = connections.get_mut(&self.remote_addr) {
+                state.update_activity();
+            }
+        }
+        Ok(())
+    }
+
+    async fn receive(&self) -> Result<Vec<u8>, DsmError> {
+        let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
+        let recv_result = timeout(Duration::from_secs(2), self.socket.recv_from(&mut buf))
+            .await
+            .map_err(|_| DsmError::network("Receive timeout", None::<std::io::Error>))?
+            .map_err(|e| DsmError::network(format!("Failed to receive data: {}", e), Some(e)))?;
+        let (len, src_addr) = recv_result;
+        if src_addr != self.remote_addr {
+            return Err(DsmError::network(
+                format!("Received data from unexpected address: {}", src_addr),
+                None::<std::io::Error>,
+            ));
+        }
+        if len < 9 {
+            return Err(DsmError::network(
+                "Message too short",
+                None::<std::io::Error>,
+            ));
+        }
+        let conn_id = u64::from_be_bytes([
+            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+        ]);
+        let msg_type = buf[8];
+        if conn_id != self.connection_id {
+            return Err(DsmError::network(
+                format!(
+                    "Unexpected connection ID: {} (expected {})",
+                    conn_id, self.connection_id
+                ),
+                None::<std::io::Error>,
+            ));
+        }
+        match msg_type {
+            t if t == UdpMessageType::Data as u8 => {
+                let auth_data = AuthData {
+                    connection_id: conn_id,
+                    message_type: t,
+                }
+                .to_bytes();
+                let nonce_value = {
+                    let mut connections = self.active_connections.write().await;
+                    if let Some(state) = connections.get_mut(&self.remote_addr) {
+                        state.update_activity();
+                        state.next_nonce.fetch_add(1, Ordering::SeqCst)
+                    } else {
+                        return Err(DsmError::network(
+                            "Connection state not found",
+                            None::<std::io::Error>,
+                        ));
+                    }
+                };
+                let nonce = CommunicationNonce::from_u64(nonce_value);
+                let encrypted_data = &buf[9..len];
+                let decrypted = self.crypto_provider.decrypt(
+                    &self.shared_secret,
+                    &nonce,
+                    encrypted_data,
+                    &auth_data,
+                )?;
+                Ok(decrypted)
+            }
+            t if t == UdpMessageType::KeepAlive as u8 => {
+                let mut connections = self.active_connections.write().await;
+                if let Some(state) = connections.get_mut(&self.remote_addr) {
+                    state.update_activity();
+                }
+                Ok(Vec::new())
+            }
+            t if t == UdpMessageType::Close as u8 => {
+                let mut connections = self.active_connections.write().await;
+                connections.remove(&self.remote_addr);
+                Err(DsmError::network(
+                    "Connection closed by peer",
+                    None::<std::io::Error>,
+                ))
+            }
+            _ => Err(DsmError::network(
+                format!("Unexpected message type: {}", msg_type),
+                None::<std::io::Error>,
+            )),
+        }
+    }
+
+    async fn close(&self) -> Result<(), DsmError> {
+        let auth_data = AuthData {
+            connection_id: self.connection_id,
+            message_type: UdpMessageType::Close as u8,
+        }
+        .to_bytes();
+        match self.socket.send_to(&auth_data, self.remote_addr).await {
+            Ok(_) => (),
+            Err(e) => {
+                tracing::warn!("Error sending close message: {}", e);
+            }
+        }
+        let mut connections = self.active_connections.write().await;
+        connections.remove(&self.remote_addr);
+        Ok(())
+    }
+
+    fn remote_addr(&self) -> SocketAddr {
+        self.remote_addr
+    }
+
+    fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    fn transport_type(&self) -> TransportType {
+        TransportType::SecureUdp
+    }
+}
+
+/// Secure UDP connection state.
+#[derive(Debug)]
+struct SecureUdpConnectionState {
+    _connection_id: u64,
+    next_nonce: AtomicU64,
+    last_activity: std::time::Instant,
+}
+
+impl SecureUdpConnectionState {
+    fn new(connection_id: u64, _shared_secret: Vec<u8>) -> Self {
+        Self {
+            _connection_id: connection_id,
+            next_nonce: AtomicU64::new(0),
+            last_activity: std::time::Instant::now(),
+        }
+    }
+
+    fn update_activity(&mut self) {
+        self.last_activity = std::time::Instant::now();
+    }
+
+    #[allow(dead_code)]
+    fn is_expired(&self, timeout_ms: u64) -> bool {
+        self.last_activity.elapsed().as_millis() > timeout_ms as u128
+    }
+}
+
+/// Pending connection for secure UDP.
+#[derive(Debug)]
+struct PendingConnection {
+    #[allow(dead_code)]
+    created_at: std::time::Instant,
+}
+
+/// Secure UDP listener implementation.
+pub struct SecureUdpListener {
+    socket: Arc<UdpSocket>,
+    local_addr: SocketAddr,
+    crypto_provider: Arc<dyn DebugCryptoProvider>,
+    active_connections: Arc<RwLock<HashMap<SocketAddr, SecureUdpConnectionState>>>,
+    pending_connections: Arc<RwLock<HashMap<u64, PendingConnection>>>,
+}
+
+#[async_trait]
+impl TransportListener for SecureUdpListener {
+    async fn accept(&self) -> Result<Box<dyn TransportConnection>, DsmError> {
+        let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
+        loop {
+            let (len, src_addr) = self.socket.recv_from(&mut buf).await.map_err(|e| {
+                DsmError::network(format!("Failed to receive data: {}", e), Some(e))
+            })?;
+            {
+                let connections = self.active_connections.read().await;
+                if connections.contains_key(&src_addr) {
+                    continue;
+                }
+            }
+            if len < 9 {
+                continue;
+            }
+            let conn_id = u64::from_be_bytes([
+                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+            ]);
+            let msg_type = buf[8];
+            if msg_type == UdpMessageType::Handshake as u8 {
+                if len < 9 + 32 {
+                    continue;
+                }
+                let client_public_key = &buf[9..len].to_vec();
+                let server_keypair = self.crypto_provider.generate_keypair()?;
+                {
+                    let mut pending = self.pending_connections.write().await;
+                    pending.retain(|_, conn| {
+                        conn.created_at.elapsed().as_millis()
+                            <= DEFAULT_HANDSHAKE_TIMEOUT_MS as u128
+                    });
+                    pending.insert(
+                        conn_id,
+                        PendingConnection {
+                            created_at: std::time::Instant::now(),
+                        },
+                    );
+                }
+                let mut response = Vec::new();
+                response.push(UdpMessageType::HandshakeResponse as u8);
+                response.extend_from_slice(&server_keypair.public_key);
+                // Optionally append a nonce for key derivation (here omitted for brevity)
+                self.socket
+                    .send_to(&response, src_addr)
+                    .await
+                    .map_err(|e| {
+                        DsmError::network(
+                            format!("Failed to send handshake response: {}", e),
+                            Some(e),
+                        )
+                    })?;
+                let session_key = self
+                    .crypto_provider
+                    .derive_shared_secret(&server_keypair.private_key, client_public_key)?;
+                let conn_state = SecureUdpConnectionState::new(conn_id, session_key.clone());
+                {
+                    let mut connections = self.active_connections.write().await;
+                    connections.insert(src_addr, conn_state);
+                    let mut pending = self.pending_connections.write().await;
+                    pending.remove(&conn_id);
+                }
+                // For key derivation, generate a new nonce for our side.
+                let our_nonce = SecureUdpTransport::generate_nonce()?;
+                // For simplicity, we assume the handshake response does not include a nonce.
+                let peer_nonce = [0u8; 32];
+                let (enc_key, mac_key) = SecureUdpTransport::derive_session_keys(
+                    &session_key,
+                    &server_keypair.public_key,
+                    client_public_key,
+                    &our_nonce,
+                    &peer_nonce,
+                )?;
+                return Ok(Box::new(SecureUdpConnection {
+                    socket: self.socket.clone(),
+                    remote_addr: src_addr,
+                    local_addr: self.local_addr,
+                    connection_id: conn_id,
+                    crypto_provider: self.crypto_provider.clone(),
+                    shared_secret: session_key,
+                    next_nonce: AtomicU64::new(0),
+                    active_connections: self.active_connections.clone(),
+                    enc_key,
+                    mac_key,
+                    peer_public_key: client_public_key.clone(),
+                }));
+            }
+        }
+    }
+
+    fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    async fn close(&self) -> Result<(), DsmError> {
+        // Implement closing the listener if needed. For now, simply return Ok.
+        Ok(())
+    }
+
+    fn transport_type(&self) -> TransportType {
+        TransportType::SecureUdp
+    }
+}
+/// Simple type alias and test implementation for Message used in benchmarks and tests.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[allow(dead_code)]
+struct Message {
+    payload: Vec<u8>,
+    message_type: String,
+}
+
+#[allow(dead_code)]
+impl Message {
+    fn new(payload: Vec<u8>, message_type: String) -> Self {
+        Self {
+            payload,
+            message_type,
+        }
+    }
+
+    fn payload(&self) -> &Vec<u8> {
+        &self.payload
+    }
+
+    fn message_type(&self) -> &String {
+        &self.message_type
+    }
+
+    fn payload_length(&self) -> usize {
+        self.payload.len()
+    }
+}
+
+pub fn transport_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("transport");
+
+    group.bench_function("secure_udp_connect", |b| {
+        b.iter(|| {
+            let transport = SecureUdpTransport::init().unwrap();
+            let addr = NetworkAddress::Socket("127.0.0.1:8000".parse().unwrap());
+
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async { black_box(transport.connect(&addr).await).unwrap() })
+        })
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, transport_benchmark);
+criterion_main!(benches);

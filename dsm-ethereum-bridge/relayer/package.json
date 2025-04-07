@@ -1,0 +1,17 @@
+{
+  "name": "dsm-eth-relayer",
+  "version": "1.0.0",
+  "description": "Off-chain relayer to anchor Ethereum events into DSM",
+  "scripts": {
+    "relay": "tsc && node dist/eth_dsm_relayer.js"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "@ethereumjs/util": "^8.0.5",
+    "web3": "^4.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "@types/node": "^18.16.18"
+  }
+}

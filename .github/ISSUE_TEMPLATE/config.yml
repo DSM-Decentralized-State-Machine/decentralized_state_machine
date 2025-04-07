@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DSM Community Discussions
+    url: https://github.com/dsm-project/decentralized-state-machine/discussions
+    about: Please ask and answer questions here.
+  - name: DSM Documentation
+    url: https://github.com/dsm-project/decentralized-state-machine/tree/main/docs
+    about: Check the documentation for usage guides and examples.

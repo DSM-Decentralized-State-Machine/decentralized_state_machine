@@ -1,0 +1,464 @@
+#[macro_use]
+extern crate criterion;
+use criterion::{black_box, criterion_main, BenchmarkId, Criterion};
+use dsm::core::state_machine::StateMachine;
+use dsm::types::operations::Operation;
+use dsm::types::state_types::{DeviceInfo, State};
+// TODO: Import Balance type once implemented
+type Balance = u64; // Temporary type alias
+use std::sync::Arc;
+use std::sync::Barrier;
+use std::thread;
+use std::time::Duration;
+
+mod bench;
+
+/// Benchmark memory usage patterns across DSM operations over time.
+///
+/// This benchmark suite profiles memory growth and retention patterns
+/// during extended operation of the DSM state machine. Results inform
+/// memory optimization strategies, memory leak detection, and resource
+/// provisioning requirements for nodes under different operational scenarios.
+fn memory_usage_benchmark(c: &mut Criterion) {
+    // Initialize DSM runtime environment
+    dsm::initialize();
+
+    let mut group = c.benchmark_group("Memory Profiling");
+    group.sample_size(10); // Lower sample size due to memory pressure
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(20));
+
+    // Benchmark different chain growth sizes
+    let chain_lengths = [100, 500, 1000, 2000];
+
+    // Memory growth during sustained operation
+    for &length in &chain_lengths {
+        group.bench_with_input(
+            BenchmarkId::new("memory_growth", length),
+            &length,
+            |b, &length| b.iter(|| black_box(measure_memory_growth(length as u64))),
+        );
+    }
+
+    // Test memory usage with different operation sizes
+    let operation_sizes = [64, 256, 1024, 4096];
+
+    for &size in &operation_sizes {
+        group.bench_with_input(
+            BenchmarkId::new("operation_size_impact", size),
+            &size,
+            |b, &size| b.iter(|| black_box(measure_operation_size_impact(100, size))),
+        );
+    }
+
+    // Memory retention after chain pruning
+    group.bench_function("memory_after_pruning", |b| {
+        b.iter(|| black_box(measure_memory_after_pruning(500, 50)))
+    });
+
+    // State caching effectiveness
+    group.bench_function("state_caching_effectiveness", |b| {
+        b.iter(|| black_box(measure_cache_effectiveness(200, 10)))
+    });
+
+    // Memory during parallel processing
+    let thread_counts = [2, 4, 8];
+
+    for &threads in &thread_counts {
+        group.bench_with_input(
+            BenchmarkId::new("parallel_processing_memory", threads),
+            &threads,
+            |b, &threads| b.iter(|| black_box(measure_parallel_memory_usage(100, threads))),
+        );
+    }
+
+    group.finish();
+}
+
+/// Measure memory growth during chain extension
+fn measure_memory_growth(length: u64) -> usize {
+    // Create state machine with genesis state
+    let mut state_machine = StateMachine::new();
+    let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+    let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+    let computed_hash = genesis.compute_hash().unwrap();
+    genesis.hash = computed_hash;
+
+    state_machine.set_state(genesis);
+
+    // Record memory allocations
+    let mut total_bytes_allocated = 0;
+
+    // Extend chain with operations of increasing size
+    for i in 0..length {
+        // Operation size grows with state number to simulate realistic workloads
+        let data_size = ((i % 100) + 10) as usize;
+        let data = vec![i as u8 % 255; data_size];
+
+        let operation = Operation::Generic {
+            operation_type: format!("memory_test_op_{}", i),
+            data,
+        };
+        state_machine.execute_transition(operation.clone()).unwrap();
+        let _current_state = state_machine.current_state().unwrap();
+
+        // Use a clone to avoid "use of moved value" error
+        state_machine.execute_transition(operation).unwrap();
+        let state_after = state_machine.current_state().unwrap();
+
+        // Estimate memory allocated for this state (rough approximation)
+        let state_size = estimate_state_size(state_after);
+        total_bytes_allocated += state_size;
+
+        // TODO: Implement history truncation in StateMachine
+        if i % 100 == 99 {
+            // Simulate memory reclamation by dropping unnecessary references
+            // TODO: Implement proper history management
+        }
+    }
+
+    total_bytes_allocated
+}
+
+/// Measure impact of different operation sizes on memory usage
+fn measure_operation_size_impact(iterations: u64, operation_size: usize) -> usize {
+    // Create state machine with genesis state
+    let mut state_machine = StateMachine::new();
+    let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+    let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+    let computed_hash = genesis.compute_hash().unwrap();
+    genesis.hash = computed_hash;
+
+    state_machine.set_state(genesis);
+
+    // Record memory usage for states
+    let mut total_bytes_allocated = 0;
+
+    // Create fixed-size operations
+    for i in 0..iterations {
+        let data = vec![i as u8 % 255; operation_size];
+
+        let operation = Operation::Generic {
+            operation_type: format!("size_test_op_{}", i),
+            data,
+        };
+
+        // Execute transition and track approximate memory usage
+        state_machine.execute_transition(operation).unwrap();
+        let state = state_machine.current_state().unwrap();
+
+        // Estimate memory for this state
+        let state_size = estimate_state_size(state);
+        total_bytes_allocated += state_size;
+    }
+
+    total_bytes_allocated
+}
+
+/// Measure memory after pruning historical states
+fn measure_memory_after_pruning(chain_length: u64, _retention_count: u64) -> usize {
+    // Create state machine with genesis state
+    let mut state_machine = StateMachine::new();
+    let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+    let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+    let computed_hash = genesis.compute_hash().unwrap();
+    genesis.hash = computed_hash;
+
+    state_machine.set_state(genesis);
+
+    // Build a chain of specified length
+    for i in 0..chain_length {
+        let data = vec![i as u8 % 255; 64]; // Fixed size operations
+
+        let operation = Operation::Generic {
+            operation_type: format!("prune_test_op_{}", i),
+            data,
+        };
+
+        state_machine.execute_transition(operation).unwrap();
+    }
+    // Record initial memory usage (approximate)
+    let initial_memory = estimate_state_machine_size(&state_machine);
+    // TODO: Implement history truncation
+    // For now just simulate history truncation
+    // state_machine.truncate_history(retention_count); // Uncomment when implemented
+
+    // Record memory after pruning
+    let final_memory = estimate_state_machine_size(&state_machine);
+
+    // Return memory difference (negative indicates memory released)
+    initial_memory.saturating_sub(final_memory)
+}
+
+/// Measure cache hit rate effect on memory usage
+fn measure_cache_effectiveness(operations: u64, repetitions: u64) -> f64 {
+    // Create state machine with genesis state
+    let mut state_machine = StateMachine::new();
+    let device_info = DeviceInfo::new("benchmark_device", vec![1, 2, 3, 4]);
+    let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+    let computed_hash = genesis.compute_hash().unwrap();
+    genesis.hash = computed_hash;
+
+    state_machine.set_state(genesis);
+
+    // Build initial chain with unique operations
+    let mut operation_cache = Vec::with_capacity(operations as usize);
+
+    for i in 0..operations {
+        let data = vec![i as u8 % 255; 32];
+
+        let operation = Operation::Generic {
+            operation_type: format!("cache_test_op_{}", i),
+            data,
+        };
+
+        operation_cache.push(operation.clone());
+        state_machine.execute_transition(operation).unwrap();
+    }
+
+    // Measure memory before repetitions
+    let pre_repeat_memory = estimate_state_machine_size(&state_machine);
+
+    // Now repeat some of the same operations
+    for _ in 0..repetitions {
+        for i in 0..operations {
+            if i % 5 == 0 {
+                // Repeat every 5th operation
+                let operation = operation_cache[i as usize].clone();
+                state_machine.execute_transition(operation).unwrap();
+            }
+        }
+    }
+
+    // Measure memory after repetitions
+    let post_repeat_memory = estimate_state_machine_size(&state_machine);
+
+    // Calculate memory per state ratio
+    let expected_growth = operations * repetitions / 5;
+    let effective_growth =
+        (post_repeat_memory - pre_repeat_memory) as f64 / pre_repeat_memory as f64;
+
+    // Return the ratio of expected to actual growth
+    // Values < 1.0 indicate memory efficiency from caching
+    effective_growth / (expected_growth as f64 / operations as f64)
+}
+
+/// Measure memory usage during parallel state machine operations
+fn measure_parallel_memory_usage(operations_per_thread: u64, thread_count: u64) -> usize {
+    // Create barrier for synchronization
+    let barrier = Arc::new(Barrier::new(thread_count as usize));
+
+    // Spawn threads
+    let mut handles = Vec::with_capacity(thread_count as usize);
+    for thread_id in 0..thread_count {
+        let thread_barrier = Arc::clone(&barrier);
+
+        let handle = thread::spawn(move || {
+            // Create state machine with genesis state
+            let mut state_machine = StateMachine::new();
+            let device_info = DeviceInfo::new(
+                &format!("benchmark_device_{}", thread_id),
+                vec![thread_id as u8; 4],
+            );
+            let mut genesis = State::new_genesis(vec![5, 6, 7, 8], device_info);
+            let computed_hash = genesis.compute_hash().unwrap();
+            genesis.hash = computed_hash;
+
+            state_machine.set_state(genesis);
+
+            // Wait for all threads to reach this point
+            thread_barrier.wait();
+
+            // Perform operations
+            let mut total_size = 0;
+            for i in 0..operations_per_thread {
+                let data = vec![(i + thread_id) as u8 % 255; 32];
+
+                let operation = Operation::Generic {
+                    operation_type: format!("thread_{}_op_{}", thread_id, i),
+                    data,
+                };
+
+                state_machine.execute_transition(operation).unwrap();
+
+                // Estimate size periodically
+                if i % 10 == 0 {
+                    total_size += estimate_state_machine_size(&state_machine);
+                }
+            }
+
+            // Return average memory usage
+            total_size / ((operations_per_thread / 10) as usize + 1)
+        });
+
+        handles.push(handle);
+    }
+
+    // Collect results
+    let mut total_memory = 0;
+    for handle in handles {
+        total_memory += handle.join().unwrap();
+    }
+
+    // Return average memory usage per thread
+    total_memory / thread_count as usize
+}
+
+/// Estimate the memory size of a state (approximate)
+fn estimate_state_size(state: &State) -> usize {
+    // Base size for state struct
+    let mut size = std::mem::size_of::<State>();
+
+    // Add size of variable-length fields
+    size += state.hash.len();
+    size += state.entropy.len();
+    size += state.prev_state_hash.len();
+
+    // Add operation size
+    size += match &state.operation {
+        Operation::Transfer {
+            amount: _,
+            to,
+            to_address,
+            token_id,
+            ..
+        } => std::mem::size_of::<Balance>() + to.len() + to_address.len() + token_id.len(),
+        Operation::Generic {
+            operation_type,
+            data,
+        } => operation_type.len() + data.len(),
+        _ => 64, // Default estimate for other operations
+    };
+
+    size += state.device_info.device_id.len();
+
+    size += 8 * state.sparse_index.indices.len(); // u64 per index
+
+    // Add padding for alignment and overhead
+    size += size / 10;
+
+    size
+}
+
+/// Estimate the total memory size of a state machine (approximate)
+fn estimate_state_machine_size(state_machine: &StateMachine) -> usize {
+    // Base size of the state machine struct
+    let mut size = std::mem::size_of::<StateMachine>();
+
+    // Add size of current state
+    if let Some(state) = state_machine.current_state() {
+        size += estimate_state_size(state);
+    }
+
+    // Add size of state history (if accessible)
+    // Note: This is an approximation as we can't directly access private fields
+    // In a real benchmark, we might use a custom instrumented version of StateMachine
+    let history_factor = 10; // Assume average of 10 states in history
+    size += history_factor * size;
+
+    size
+}
+
+fn benchmark_state_history_pruning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("State History Memory Management");
+
+    // Initialize state machine
+    let state_machine = StateMachine::new();
+
+    let _count = 100; // Placeholder until implementation
+
+    // Test pruning with different strategies
+    group.bench_function("Prune with keep_last_10", |b| {
+        b.iter(|| {
+            // TODO: Implement proper history pruning mechanism
+            black_box(&state_machine)
+        })
+    });
+
+    group.finish();
+}
+
+fn benchmark_state_retention_policies(c: &mut Criterion) {
+    let mut group = c.benchmark_group("State Retention Policies");
+
+    // ...existing code...
+
+    let state_machine = StateMachine::new();
+    group.bench_function("Selective retention policy", |b| {
+        b.iter(|| {
+            // Simulating truncation (uncomment when implemented)
+            // state_machine.truncate_history(0);
+            black_box(&state_machine)
+        })
+    });
+
+    group.finish();
+}
+
+#[allow(dead_code)]
+fn calculate_memory_usage(states: &[State]) -> usize {
+    let mut total = 0;
+
+    for state in states {
+        // Calculate state size
+        total += std::mem::size_of::<State>();
+        total += state.hash.capacity();
+        total += state.prev_state_hash.capacity();
+        // Add other relevant fields
+    }
+
+    // Fix the division by converting u64 to usize or vice versa
+    let _average_per_state = total / (states.len() as usize);
+    total
+}
+
+fn benchmark_memory_usage_by_type(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Memory Usage By Type");
+
+    // Generate operations of different types
+    let _operations = vec![
+        Operation::Generic {
+            operation_type: "test".to_string(),
+            data: vec![1, 2, 3, 4],
+        },
+        Operation::Transfer {
+            amount: dsm::types::token_types::Balance(100),
+            to: "user123".to_string(),
+            token_id: "token1".to_string(),
+            recipient: "recipient".to_string(),
+            to_address: "address123".to_string(),
+        },
+    ];
+
+    let devices = vec![DeviceInfo::new("test", vec![1, 2, 3, 4])];
+    let indices = vec![State::new_genesis(vec![1, 2, 3], devices[0].clone())];
+
+    group.bench_function("Analyze device signatures", |b| {
+        b.iter(|| {
+            for device in &devices {
+                let _device_id = &device.device_id;
+                let _public_key = &device.public_key;
+            }
+        })
+    });
+
+    group.bench_function("Access sparse index data", |b| {
+        b.iter(|| {
+            for idx in &indices {
+                let _data = &idx.sparse_index.indices;
+            }
+        })
+    });
+
+    group.finish();
+}
+
+criterion_group! {
+    name = benches;
+    config = bench::configure_criterion("memory_profile_benchmark")();
+    targets = memory_usage_benchmark,
+             benchmark_state_history_pruning,
+             benchmark_state_retention_policies,
+             benchmark_memory_usage_by_type
+}
+criterion_main!(benches);

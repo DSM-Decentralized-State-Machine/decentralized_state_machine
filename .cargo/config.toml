@@ -1,0 +1,15 @@
+# Workspace build configuration
+[build]
+rustflags = [
+    "-C", "overflow-checks=on",
+    "-D", "warnings",
+    "-W", "clippy::all",
+    "-W", "clippy::pedantic",
+]
+
+# Set default release profile
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "thin"
+strip = true

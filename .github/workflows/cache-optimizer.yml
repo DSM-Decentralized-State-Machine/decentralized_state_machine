@@ -1,0 +1,47 @@
+name: Cache Optimizer
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Run at 2 AM UTC every Sunday
+  workflow_dispatch:
+
+jobs:
+  update-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+        
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          
+      - name: Warm up cache
+        run: |
+          # Build all targets to populate the cache
+          cargo build --workspace --all-targets
+
+      - name: Prepare cache optimization report
+        run: |
+          echo "Cache was updated on $(date)" > cache-report.txt
+          echo "Cargo.lock hash: $(sha256sum Cargo.lock | cut -d ' ' -f 1)" >> cache-report.txt
+          
+      - name: Upload cache report
+        uses: actions/upload-artifact@v3
+        with:
+          name: cache-report
+          path: cache-report.txt

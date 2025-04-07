@@ -1,0 +1,77 @@
+# DSM Storage Node Configuration
+
+# API configuration
+[api]
+bind_address = "127.0.0.1"
+port = 8080
+enable_cors = false
+enable_rate_limits = true
+max_body_size = 10485760  # 10 MB
+
+# Node information
+[node]
+id = "node1"
+name = "DSM Storage Node 1"
+region = "us-west"
+operator = "DSM Dev Team"
+version = "0.1.0"
+description = "Development storage node for DSM"
+public_key = ""
+endpoint = "http://127.0.0.1:8080"
+
+# Storage configuration
+[storage]
+engine = "sqlite"
+capacity = 10737418240  # 10 GB
+data_dir = "./data"
+database_path = "./data/storage.db"
+assignment_strategy = "DeterministicHashing"
+replication_strategy = "FixedReplicas"
+replica_count = 3
+min_regions = 2
+default_ttl = 0  # No expiration by default
+enable_pruning = true
+pruning_interval = 3600  # 1 hour
+
+# Network configuration
+[network]
+listen_addr = "0.0.0.0"
+public_endpoint = "http://localhost:8080"
+port = 8080
+max_connections = 1000
+connection_timeout = 30
+bootstrap_nodes = [
+    "http://bootstrap1.dsm.network:8080",
+    "http://bootstrap2.dsm.network:8080"
+]
+enable_discovery = true
+discovery_interval = 300
+max_peers = 100
+
+# Security configuration
+[security]
+private_key_path = "./keys/node.key"
+public_key_path = "./keys/node.pub"
+enable_tls = false
+tls_cert_path = "./keys/node.crt"
+tls_key_path = "./keys/node.key"
+require_auth = false
+authorized_keys_path = "./keys/authorized_keys.json"
+enable_rate_limits = true
+rate_limit = 100
+
+# Staking configuration
+[staking]
+enable_staking = false
+dsm_endpoint = "http://dsm.network:8080"
+staking_address = ""
+validator_id = ""
+min_stake = 1000
+auto_compound = true
+
+# Logging configuration
+[logging]
+level = "info"
+file_path = "./logs/node.log"
+format = "text"
+console_logging = true
