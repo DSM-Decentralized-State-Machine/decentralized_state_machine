@@ -30,6 +30,8 @@ pub struct Config {
 pub struct StorageConfig {
     /// Data directory path
     pub data_dir: PathBuf,
+    /// Database path
+    pub database_path: String,
     /// Backup directory path
     pub backup_dir: Option<PathBuf>,
     /// Maximum storage capacity in gigabytes
@@ -42,13 +44,37 @@ pub struct StorageConfig {
     pub encryption_key: Option<String>,
     /// Compression algorithm
     pub compression: Option<String>,
+    /// Storage engine type (memory, sql, epidemic, distributed)
+    pub engine_type: Option<String>,
+    /// Region identifier
+    pub region: Option<String>,
+    /// Replication factor for distributed storage
+    pub replication_factor: Option<u32>,
+    /// Maximum hops for distributed storage
+    pub max_hops: Option<u32>,
+    /// Gossip interval in milliseconds for epidemic storage
+    pub gossip_interval_ms: Option<u64>,
+    /// Anti-entropy interval in milliseconds for epidemic storage
+    pub anti_entropy_interval_ms: Option<u64>,
+    /// Maximum entries per gossip message for epidemic storage
+    pub max_entries_per_gossip: Option<usize>,
+    /// Gossip fanout for epidemic storage
+    pub gossip_fanout: Option<usize>,
+    /// Enable small-world topology for epidemic storage
+    pub enable_small_world: Option<bool>,
+    /// Maximum immediate neighbors for small-world topology
+    pub max_immediate_neighbors: Option<usize>,
+    /// Maximum long links for small-world topology
+    pub max_long_links: Option<usize>,
 }
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     /// List of bootstrap nodes
-    pub bootstrap_nodes: Vec<String>,
+    pub bootstrap_nodes: Option<Vec<String>>,
+    /// List of storage nodes
+    pub storage_nodes: Option<Vec<String>>,
     /// External address
     pub external_address: Option<String>,
     /// Network port
@@ -61,6 +87,14 @@ pub struct NetworkConfig {
     pub force_ipv6: bool,
     /// Disable peer discovery
     pub disable_discovery: bool,
+    /// Gossip protocol port
+    pub gossip_port: Option<u16>,
+    /// Maximum concurrent connections
+    pub max_connections: Option<usize>,
+    /// Connection timeout in seconds
+    pub connection_timeout: Option<u64>,
+    /// Heartbeat interval in seconds
+    pub heartbeat_interval: Option<u64>,
 }
 
 /// Consensus configuration
@@ -191,21 +225,38 @@ impl Default for Config {
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("data"),
+                database_path: "data/storage.db".to_string(),
                 backup_dir: Some(PathBuf::from("backup")),
                 max_size_gb: None,
                 cleanup_interval: None,
                 backup_interval: None,
                 encryption_key: None,
                 compression: None,
+                engine_type: Some("sql".to_string()),
+                region: Some("default".to_string()),
+                replication_factor: Some(3),
+                max_hops: Some(3),
+                gossip_interval_ms: Some(5000),
+                anti_entropy_interval_ms: Some(60000),
+                max_entries_per_gossip: Some(100),
+                gossip_fanout: Some(3),
+                enable_small_world: Some(true),
+                max_immediate_neighbors: Some(16),
+                max_long_links: Some(16),
             },
             network: NetworkConfig {
-                bootstrap_nodes: vec![],
+                bootstrap_nodes: Some(vec![]),
+                storage_nodes: Some(vec![]),
                 external_address: None,
-                port: None,
+                port: Some(3000),
                 nat_mapping: false,
                 force_ipv4: false,
                 force_ipv6: false,
                 disable_discovery: false,
+                gossip_port: Some(3001),
+                max_connections: Some(100),
+                connection_timeout: Some(30),
+                heartbeat_interval: Some(10),
             },
             consensus: ConsensusConfig {
                 committee_size: 4,
