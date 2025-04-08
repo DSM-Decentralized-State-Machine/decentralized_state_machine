@@ -14,7 +14,9 @@ use crate::types::operations::Operation;
 use crate::types::operations::Ops;
 use crate::types::state_types::State;
 use crate::types::token_types::Token;
-use crate::vault::{LimboVault, VaultState, FulfillmentProof, VaultStatus};
+use crate::vault::{LimboVault, VaultStatus, DeterministicLimboVault};
+#[cfg(feature = "reqwest")]
+use crate::vault::{VaultState, FulfillmentProof};
 #[cfg(feature = "reqwest")]
 // LimboVault is used directly from the re-export
 use crate::InboxEntry;
