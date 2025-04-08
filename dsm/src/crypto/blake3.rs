@@ -86,6 +86,9 @@ thread_local! {
 
 /// High-performance variant of generate_deterministic_entropy for concurrent benchmarks
 /// Uses thread-local storage to avoid repeated hasher allocation
+/// 
+/// IMPORTANT: This function must produce exactly the same results as the non-concurrent version
+/// to ensure consistent behavior between transition creation and verification paths.
 pub fn generate_deterministic_entropy_concurrent(
     current_entropy: &[u8],
     operation: &[u8],
@@ -95,7 +98,7 @@ pub fn generate_deterministic_entropy_concurrent(
         let mut hasher = hasher_cell.borrow_mut();
         hasher.reset(); // Reset the hasher for reuse
 
-        // Process input data
+        // Ensure identical data ordering as in the non-concurrent version
         hasher.update(current_entropy);
         hasher.update(operation);
         hasher.update(&next_state_number.to_le_bytes());

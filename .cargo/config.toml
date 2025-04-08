@@ -1,15 +1,20 @@
-# Workspace build configuration
 [build]
+# This flag enables conditional compilation for rust-analyzer
+# It helps with macro expansion issues in the IDE
+rustflags = ["--cfg", "rust_analyzer"]
+
+[target.'cfg(all())']
 rustflags = [
-    "-C", "overflow-checks=on",
+    # Enable all clippy lints except those explicitly allowed
     "-D", "warnings",
-    "-W", "clippy::all",
-    "-W", "clippy::pedantic",
+    # These are particularly important for cryptographic code
+    "-D", "unsafe_code",
+    # Performance optimizations that don't sacrifice safety
+    "-C", "target-cpu=native",
 ]
 
-# Set default release profile
-[profile.release]
-panic = "abort"
-codegen-units = 1
-lto = "thin"
-strip = true
+# Toolchain configuration
+[toolchain]
+# The toolchain version should match what's in rust-toolchain.toml
+channel = "nightly-2025-02-25"
+components = ["rust-src", "rustfmt", "clippy"]

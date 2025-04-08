@@ -3,20 +3,20 @@
 //! Implements quantum-resistant Pedersen commitments using post-quantum secure
 //! primitives only. No classical variants are supported.
 
-use crate::types::error::DsmError;
+use std::str::FromStr;
+
 use blake3;
 use num_bigint::BigUint;
 use num_primes::Generator;
 use rand::{CryptoRng, RngCore};
-use serde::Deserialize;
-use serde::Serialize;
-use serde_with::hex::Hex;
+use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use sha3::digest::ExtendableOutput;
-use sha3::digest::Update;
-use sha3::digest::XofReader;
-use sha3::{Digest, Sha3_512};
-use std::str::FromStr;
+use sha3::{
+    digest::{ExtendableOutput, Update, XofReader},
+    Digest, Sha3_512,
+};
+
+use crate::types::error::DsmError;
 
 type DsmResult<T> = Result<T, DsmError>;
 
@@ -30,10 +30,8 @@ pub enum SecurityLevel {
 const DOMAIN_COMMIT: &[u8] = b"DSM.v1.pedersen.commit";
 
 /// Parameters for quantum-resistant Pedersen commitment
-/// Parameters for quantum-resistant Pedersen commitment
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde_as]
-#[derive(Serialize, Deserialize)]
 pub struct PedersenParams {
     #[serde(with = "biguint_serde")]
     pub g: BigUint, // Generator
@@ -68,8 +66,8 @@ impl PedersenParams {
     }
 }
 
-#[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde_as]
 pub struct PedersenCommitment {
     /// The commitment value
     #[serde(with = "biguint_serde")]
@@ -88,8 +86,9 @@ pub struct PedersenCommitment {
 
 /// Helper module for serializing BigUint
 mod biguint_serde {
-    use super::*;
     use serde::{Deserializer, Serializer};
+
+    use super::*;
 
     pub fn serialize<S>(num: &BigUint, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -272,6 +271,7 @@ pub fn verify(commitment: &PedersenCommitment) -> DsmResult<bool> {
 }
 
 /// Generate Pedersen parameters
+#[allow(clippy::many_single_char_names)]
 fn generate_pedersen_params(_p_bits: usize, q_bits: usize) -> (BigUint, BigUint, BigUint, BigUint) {
     // Generate safe prime p = 2q + 1 where q is also prime
     let (p, q) = loop {
@@ -352,6 +352,7 @@ fn hash_commitment(commitment: &BigUint, rounds: u32) -> DsmResult<Vec<u8>> {
 }
 
 /// Constant-time equality check
+#[allow(clippy::many_single_char_names)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -365,9 +366,24 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+pub fn commit(value: &[u8], randomness: &[u8]) -> Vec<u8> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(value);
+    hasher.update(randomness);
+    hasher.finalize().as_bytes().to_vec()
+}
+
+#[cfg(test)]
+pub fn verify_commitment(commitment: &[u8], value: &[u8], randomness: &[u8]) -> bool {
+    let expected = commit(value, randomness);
+    constant_time_eq(commitment, &expected)
+}
+
+#[cfg(test)]
 mod tests {
-    use super::*;
     use rand::thread_rng;
+
+    use super::*;
 
     #[test]
     fn test_commitment_flow() {

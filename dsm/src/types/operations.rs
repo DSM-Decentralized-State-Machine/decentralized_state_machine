@@ -1,9 +1,11 @@
-use crate::commitments::precommit::SecurityParameters;
-use crate::types::error::DsmError;
-use crate::types::token_types::Balance;
+use std::{collections::HashMap, fmt::Debug};
+
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt::Debug;
+
+use crate::{
+    commitments::precommit::SecurityParameters,
+    types::{error::DsmError, token_types::Balance},
+};
 
 /// Base Operations trait that all specific operation traits inherit from
 pub trait Ops: Debug {

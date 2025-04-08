@@ -43,13 +43,13 @@
 //! # }
 //! ```
 
-use crate::core::state_machine::hashchain::HashChain;
-use crate::core::state_machine::transition::StateTransition;
-use crate::merkle::tree::MerkleTree;
-use crate::types::error::DsmError;
-use crate::types::operations::Operation;
-use crate::types::state_types::State;
 use std::time::SystemTime;
+
+use crate::{
+    core::state_machine::{hashchain::HashChain, transition::StateTransition},
+    merkle::tree::MerkleTree,
+    types::{error::DsmError, operations::Operation, state_types::State},
+};
 
 /// Initialize the batch processing module
 pub fn init() {
@@ -183,21 +183,19 @@ impl TransactionBatch {
 
         // Get the transition to verify
         let transition = &self.transitions[transition_index];
-        
+
         // Serialize transition to bytes for hashing
-        let transition_bytes = bincode::serialize(transition)?
-            .as_slice();
+        let serialized_transition = bincode::serialize(transition)?;
+        let transition_bytes = serialized_transition.as_slice();
 
         // Check token balances if present - prevent insufficient balance
         if let Some(balances) = &transition.token_balances {
             // Get the current state for this device from the chain
             let device_id = &transition.device_id;
-            let current_state = chain.get_state(device_id).ok_or(
-                DsmError::not_found(
-                    "State",
-                    Some(format!("No state found for device {}", device_id)),
-                )
-            )?;
+            let current_state = chain.get_state(device_id).ok_or(DsmError::not_found(
+                "State",
+                Some(format!("No state found for device {}", device_id)),
+            ))?;
 
             // Check each token balance for sufficient funds
             for (token_id, new_balance) in balances {
@@ -217,50 +215,56 @@ impl TransactionBatch {
 
         // Create a Merkle proof for the transition
         let transition_hash = blake3::hash(transition_bytes).as_bytes().to_vec();
-        
+
         // Get all transactions in the batch from the chain
-        let batch_info = chain.get_batch(batch_id).ok_or(
-            DsmError::not_found("Batch", Some(format!("Batch {} not found", batch_id)))
-        )?;
-        
+        let batch_info = match chain.get_batch(batch_id) {
+            Ok(info) => info,
+            Err(_) => {
+                return Err(DsmError::not_found(
+                    "Batch",
+                    Some(format!("Batch {} not found", batch_id)),
+                ))
+            }
+        };
+
         // Build a Merkle tree from all transitions in the batch
         let mut tree_leaves = Vec::with_capacity(self.transitions.len());
         for transition in &self.transitions {
-            let t_bytes = bincode::serialize(transition)?
-                .as_slice();
+            let serialized_t = bincode::serialize(transition)?;
+            let t_bytes = serialized_t.as_slice();
             let hash = blake3::hash(t_bytes).as_bytes().to_vec();
             tree_leaves.push(hash);
         }
-        
+
         // Create the Merkle tree
         let tree = MerkleTree::new(tree_leaves);
-        
+
         // Get the Merkle proof for the target transition
         let proof = tree.generate_proof(transition_index);
-        
+
         // Verify the proof
         let mut root_hash_array = [0u8; 32];
         let mut transition_hash_array = [0u8; 32];
-        
+
         if let Some(root) = tree.root_hash() {
             root_hash_array.copy_from_slice(&root);
         } else {
             return Ok(false);
         }
-        
+
         if transition_hash.len() >= 32 {
             transition_hash_array.copy_from_slice(&transition_hash[0..32]);
         } else {
             return Ok(false);
         }
-        
+
         let result = MerkleTree::verify_proof(
-            &root_hash_array, 
-            &transition_hash_array, 
-            &proof.path, 
-            proof.leaf_index
+            &root_hash_array,
+            &transition_hash_array,
+            &proof.path,
+            proof.leaf_index,
         );
-        
+
         // If the batch has a transitions root, compare it
         if !batch_info.transitions_root.is_empty() {
             let root_opt = tree.root_hash();
@@ -272,7 +276,7 @@ impl TransactionBatch {
                 return Ok(false);
             }
         }
-        
+
         Ok(result)
     }
 }

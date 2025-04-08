@@ -127,8 +127,8 @@ pub fn combine_hashes(hashes: &[HashOutput]) -> HashOutput {
 
     for hash in hashes {
         // Create a reference to the hash bytes that lasts for the entire update operation
-        let hash_bytes = hash.as_bytes();
-        hasher.update(hash_bytes);
+        let hash_bytes_ref = hash.as_bytes();
+        hasher.update(hash_bytes_ref);
     }
 
     hasher.finalize()

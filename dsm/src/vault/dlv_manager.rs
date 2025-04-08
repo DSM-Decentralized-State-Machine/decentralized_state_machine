@@ -4,16 +4,20 @@
 //! providing functionality for creating, tracking, and interacting with vaults
 //! in a thread-safe manner.
 
-use super::{DeterministicLimboVault, VaultCondition, VaultStatus};
-use crate::types::error::DsmError;
-use crate::types::state_types::State;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use super::{LimboVault, VaultState, FulfillmentMechanism, FulfillmentProof};
+use crate::types::{
+    error::DsmError,
+    state_types::State,
+};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, RwLock},
+};
 
-/// Manages Deterministic Limbo Vaults
+/// Manages Limbo Vaults
 pub struct DLVManager {
     /// Vaults managed by this instance, keyed by vault ID
-    vaults: RwLock<HashMap<String, Arc<Mutex<DeterministicLimboVault>>>>,
+    vaults: RwLock<HashMap<String, Arc<Mutex<LimboVault>>>>,
 }
 
 impl DLVManager {
@@ -28,14 +32,13 @@ impl DLVManager {
     pub fn create_vault(
         &self,
         creator_keypair: (&[u8], &[u8]),
-        condition: VaultCondition,
+        condition: FulfillmentMechanism,
         content: &[u8],
         content_type: &str,
         intended_recipient: Option<Vec<u8>>,
         reference_state: &State,
     ) -> Result<String, DsmError> {
-        // Create the vault
-        let vault = DeterministicLimboVault::new(
+        let vault = LimboVault::new(
             creator_keypair,
             condition,
             content,
@@ -45,13 +48,9 @@ impl DLVManager {
         )?;
 
         let vault_id = vault.id.clone();
-
-        // Store the vault
+        
         let mut vaults = self.vaults.write().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire write lock on vaults",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire write lock on vaults", None::<std::convert::Infallible>)
         })?;
 
         vaults.insert(vault_id.clone(), Arc::new(Mutex::new(vault)));
@@ -63,77 +62,59 @@ impl DLVManager {
     pub fn get_vault(
         &self,
         vault_id: &str,
-    ) -> Result<Arc<Mutex<DeterministicLimboVault>>, DsmError> {
+    ) -> Result<Arc<Mutex<LimboVault>>, DsmError> {
         let vaults = self.vaults.read().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire read lock on vaults",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire read lock on vaults", None::<std::convert::Infallible>)
         })?;
 
         vaults.get(vault_id).cloned().ok_or_else(|| {
-            DsmError::not_found(
-                "Vault",
-                Some(format!("Vault with ID {} not found", vault_id)),
-            )
+            DsmError::not_found("Vault", Some(format!("Vault with ID {} not found", vault_id)))
         })
     }
 
     /// List all vault IDs
     pub fn list_vaults(&self) -> Result<Vec<String>, DsmError> {
         let vaults = self.vaults.read().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire read lock on vaults",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire read lock on vaults", None::<std::convert::Infallible>)
         })?;
 
         Ok(vaults.keys().cloned().collect())
     }
 
     /// Get vaults by status
-    pub fn get_vaults_by_status(&self, status: VaultStatus) -> Result<Vec<String>, DsmError> {
+    pub fn get_vaults_by_status(&self, status: VaultState) -> Result<Vec<String>, DsmError> {
         let vaults = self.vaults.read().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire read lock on vaults",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire read lock on vaults", None::<std::convert::Infallible>)
         })?;
 
         let mut result = Vec::new();
-
         for (id, vault_lock) in vaults.iter() {
             if let Ok(vault) = vault_lock.lock() {
-                if vault.status == status {
+                if vault.state == status {
                     result.push(id.clone());
                 }
             }
         }
-
         Ok(result)
     }
 
-    /// Try to unlock a vault
+    /// Attempt to unlock a vault
     pub fn try_unlock_vault(
         &self,
         vault_id: &str,
-        proof: &[u8],
+        proof: FulfillmentProof,
         requester: &[u8],
         reference_state: &State,
     ) -> Result<bool, DsmError> {
         let vault_lock = self.get_vault(vault_id)?;
-
         let mut vault = vault_lock.lock().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire lock on vault",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire lock on vault", None::<std::convert::Infallible>)
         })?;
 
-        vault.try_unlock(proof, requester, reference_state)
+        vault.unlock(proof, requester, reference_state)
     }
 
-    /// Claim the content of an unlocked vault
+    /// Claim vault content
     pub fn claim_vault_content(
         &self,
         vault_id: &str,
@@ -141,15 +122,11 @@ impl DLVManager {
         reference_state: &State,
     ) -> Result<Vec<u8>, DsmError> {
         let vault_lock = self.get_vault(vault_id)?;
-
         let mut vault = vault_lock.lock().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire lock on vault",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire lock on vault", None::<std::convert::Infallible>)
         })?;
 
-        vault.claim_content(claimant, reference_state)
+        vault.claim(claimant, reference_state).map(|result| result.content)
     }
 
     /// Invalidate a vault
@@ -161,18 +138,14 @@ impl DLVManager {
         reference_state: &State,
     ) -> Result<(), DsmError> {
         let vault_lock = self.get_vault(vault_id)?;
-
         let mut vault = vault_lock.lock().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire lock on vault",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire lock on vault", None::<std::convert::Infallible>)
         })?;
 
         vault.invalidate(reason, creator_private_key, reference_state)
     }
 
-    /// Create a vault post for decentralized storage
+    /// Create a vault post
     pub fn create_vault_post(
         &self,
         vault_id: &str,
@@ -180,15 +153,12 @@ impl DLVManager {
         timeout: Option<u64>,
     ) -> Result<Vec<u8>, DsmError> {
         let vault_lock = self.get_vault(vault_id)?;
-
         let vault = vault_lock.lock().map_err(|_| {
-            DsmError::internal(
-                "Failed to acquire lock on vault",
-                None::<std::convert::Infallible>,
-            )
+            DsmError::internal("Failed to acquire lock on vault", None::<std::convert::Infallible>)
         })?;
 
-        vault.to_vault_post(purpose, timeout)
+        let post = vault.to_vault_post(purpose, timeout)?;
+        bincode::serialize(&post).map_err(|e| DsmError::serialization("Failed to serialize vault post", Some(e)))
     }
 }
 

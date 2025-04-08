@@ -1,9 +1,11 @@
-use crate::api::token_api;
-use crate::types::error::DsmError;
-use crate::types::token_types::Token;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+};
+
+use crate::{
+    api::token_api,
+    types::{error::DsmError, token_types::Token},
 };
 
 /// Initialize the token interface
@@ -81,12 +83,20 @@ impl TokenInterface for TokenFace {
         initial_supply: i64,
         max_supply: Option<i64>,
     ) -> Result<Token, DsmError> {
-        let id =
-            token_api::create_token(owner_id, name, symbol, decimals, initial_supply, max_supply)?;
+        let id = token_api::create_token(
+            owner_id,
+            name,
+            symbol,
+            decimals,
+            initial_supply as u64,
+            max_supply.map(|v| v as u64),
+        )?;
         let token = get_token(&id)?;
 
         let mut tokens = self.tokens.lock().map_err(|_| DsmError::LockError)?;
         tokens.insert(id.clone(), token.clone());
+
+        println!("Token created with ID: {}", id);
 
         Ok(token)
     }

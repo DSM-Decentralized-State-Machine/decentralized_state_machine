@@ -79,16 +79,17 @@ impl MerkleTree {
             root: None,
             leaves: Vec::new(),
         };
-        
+
         // Add all leaves to the tree
         for leaf in leaves {
             tree.add_leaf(leaf);
         }
-        
+
         tree
     }
-    
+
     /// Create a new empty Merkle tree
+    #[allow(dead_code)]
     pub fn new_empty() -> Self {
         MerkleTree {
             root: None,
@@ -258,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_empty_tree() {
-        let tree = MerkleTree::new();
+        let tree = MerkleTree::new(Vec::new());
         assert!(tree.root.is_none());
         assert!(tree.root_hash().is_none());
         assert_eq!(tree.leaves.len(), 0);
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn test_single_leaf_tree() {
         let leaf = hash_data(b"test data");
-        let mut tree = MerkleTree::new();
+        let mut tree = MerkleTree::new(Vec::new());
         tree.add_leaf(b"test data".to_vec());
 
         assert!(tree.root.is_some());
@@ -280,7 +281,7 @@ mod tests {
         let leaf1 = hash_data(b"data1");
         let leaf2 = hash_data(b"data2");
 
-        let mut tree = MerkleTree::new();
+        let mut tree = MerkleTree::new(Vec::new());
         tree.add_leaf(b"data1".to_vec());
         tree.add_leaf(b"data2".to_vec());
 
@@ -295,7 +296,7 @@ mod tests {
     fn test_proof_generation_and_verification() {
         let leaf2 = hash_data(b"data2");
 
-        let mut tree = MerkleTree::new();
+        let mut tree = MerkleTree::new(Vec::new());
         tree.add_leaf(b"data1".to_vec());
         tree.add_leaf(b"data2".to_vec());
         tree.add_leaf(b"data3".to_vec());
@@ -328,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_invalid_proof_index() {
-        let tree = MerkleTree::new();
+        let tree = MerkleTree::new(Vec::new());
         let proof = tree.generate_proof(1);
         assert_eq!(proof.path.len(), 0);
     }
@@ -337,7 +338,7 @@ mod tests {
     fn test_odd_number_of_leaves() {
         let leaf3 = hash_data(b"data3");
 
-        let mut tree = MerkleTree::new();
+        let mut tree = MerkleTree::new(Vec::new());
         tree.add_leaf(b"data1".to_vec());
         tree.add_leaf(b"data2".to_vec());
         tree.add_leaf(b"data3".to_vec());

@@ -2,10 +2,15 @@
 // This implements precise measurements of core cryptographic primitives and state transitions
 // without relying on external benchmarking frameworks
 
-use dsm::core::state_machine::{self, generate_transition_entropy, transition};
-use dsm::types::operations::Operation;
-use dsm::types::state_types::{DeviceInfo, State};
 use std::time::{Duration, Instant};
+
+use dsm::{
+    core::state_machine::{self, generate_transition_entropy, transition},
+    types::{
+        operations::Operation,
+        state_types::{DeviceInfo, State},
+    },
+};
 
 // Configuration parameters for benchmark precision
 const WARMUP_ITERATIONS: usize = 10;

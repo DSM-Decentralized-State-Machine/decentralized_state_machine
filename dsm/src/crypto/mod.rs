@@ -71,11 +71,11 @@ pub fn init_crypto() {
 
 pub fn generate_keypair() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     // Generate Kyber key pair for encryption
-    let (kyber_pk, kyber_sk) = kyber::generate_kyber_keypair();
+    let (kyber_public, kyber_secret) = kyber::generate_kyber_keypair();
     // Generate SPHINCS+ key pair for signatures
-    let (sphincs_pk, sphincs_sk) = sphincs::generate_sphincs_keypair();
+    let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair();
 
-    (kyber_pk, kyber_sk, sphincs_pk, sphincs_sk)
+    (kyber_public, kyber_secret, sphincs_public, sphincs_secret)
 }
 
 /// Verify a signature using SPHINCS+
@@ -237,12 +237,12 @@ mod tests {
     fn test_sign_and_verify() {
         // Generate dummy keypairs from the available crypto functions.
         // generate_keypair returns (kyber_pk, kyber_sk, sphincs_pk, sphincs_sk)
-        let (_kyber_pk, _kyber_sk, sphincs_pk, sphincs_sk) = generate_keypair();
+        let (_kyber_pub, _kyber_sec, sphincs_public, sphincs_secret) = generate_keypair();
 
         // Attempt to sign a test message using SPHINCS+
-        if let Some(signature) = sign_data(TEST_MESSAGE, &sphincs_sk) {
+        if let Some(signature) = sign_data(TEST_MESSAGE, &sphincs_secret) {
             // The signature should verify with the corresponding public key.
-            let valid = verify_signature(TEST_MESSAGE, &signature, &sphincs_pk);
+            let valid = verify_signature(TEST_MESSAGE, &signature, &sphincs_public);
             assert!(valid, "Signature verification failed");
         } else {
             panic!("Failed to sign the test message");
@@ -253,12 +253,12 @@ mod tests {
     fn test_encrypt_and_decrypt() {
         // Generate dummy keypair (using kyber keys)
         // We use generate_keypair; first two elements are kyber keys.
-        let (kyber_pk, kyber_sk, _sphincs_pk, _sphincs_sk) = generate_keypair();
+        let (kyber_public, kyber_secret, _sphincs_pub, _sphincs_sec) = generate_keypair();
 
         // Encrypt a test message for the recipient
-        if let Some(encrypted) = encrypt_for_recipient(&kyber_pk, TEST_MESSAGE) {
+        if let Some(encrypted) = encrypt_for_recipient(&kyber_public, TEST_MESSAGE) {
             // Decrypt the ciphertext using the recipient's secret key
-            if let Some(decrypted) = decrypt_from_sender(&kyber_sk, &encrypted) {
+            if let Some(decrypted) = decrypt_from_sender(&kyber_secret, &encrypted) {
                 assert_eq!(decrypted, TEST_MESSAGE);
             } else {
                 panic!("Decryption failed");

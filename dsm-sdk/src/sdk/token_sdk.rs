@@ -9,18 +9,23 @@
 //! governance. While application-specific tokens may be created within the DSM framework,
 //! all system-level operations require ROOT as the transactional medium.
 
-use dsm::commitments::SmartCommitment as DsmSmartCommitment;
-use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use super::IdentitySDK;
-use super::core_sdk::{CoreSDK, TokenManager};
-use dsm::types::error::DsmError;
-use dsm::types::operations::{Operation, TransactionMode, VerificationType};
-use dsm::types::state_types::State;
-use dsm::types::token_types::{Balance, TokenMetadata, TokenOperation, TokenStatus, TokenType};
+use dsm::{
+    commitments::SmartCommitment as DsmSmartCommitment,
+    types::{
+        error::DsmError,
+        operations::{Operation, TransactionMode, VerificationType},
+        state_types::State,
+        token_types::{Balance, TokenMetadata, TokenOperation, TokenStatus, TokenType},
+    },
+};
+use parking_lot::RwLock;
+
+use super::{
+    core_sdk::{CoreSDK, TokenManager},
+    IdentitySDK,
+};
 
 // Replacing Address with String for compatibility
 type Address = String;
@@ -54,7 +59,7 @@ pub struct RootToken {
 
 impl RootToken {
     /// Create a new ROOT token instance with precise economic parameters
-    pub fn new(total_supply: i64) -> Self {
+    pub fn new(total_supply: u64) -> Self {
         let mut fields = HashMap::new();
         fields.insert("ecosystem".to_string(), "DSM".to_string());
         fields.insert("governance_model".to_string(), "meritocratic".to_string());
@@ -64,13 +69,13 @@ impl RootToken {
         // Default fee schedule for system operations with more granular control
         let mut fee_schedule = HashMap::new();
         fee_schedule.insert("token_creation".to_string(), Balance::new(10));
-        fee_schedule.insert("token_update".to_string(), Balance::new(5)); 
+        fee_schedule.insert("token_update".to_string(), Balance::new(5));
         fee_schedule.insert("token_transfer".to_string(), Balance::new(1));
         fee_schedule.insert("token_burn".to_string(), Balance::new(1));
         fee_schedule.insert("subscription_base".to_string(), Balance::new(5));
         fee_schedule.insert("state_transition".to_string(), Balance::new(1));
         fee_schedule.insert("smart_commitment".to_string(), Balance::new(2));
-        
+
         let metadata = TokenMetadata {
             name: "ROOT".to_string(),
             symbol: "ROOT".to_string(), 
@@ -326,7 +331,7 @@ impl TokenSDK<IdentitySDK> {
         &self,
         from_address: &str,
         to_address: &str,
-        amount: i64,
+        amount: u64,
     ) -> Result<TokenOperation, DsmError> {
         // Verify sender has sufficient balance
         let balances = self.balances.read();
@@ -391,7 +396,7 @@ impl TokenSDK<IdentitySDK> {
                 // Create the operation
                 let op = Operation::Transfer {
                     to_address: recipient.to_string(),
-                    amount: Balance::new(*amount), // Convert i64 to Balance
+                    amount: Balance::new(*amount), // Use u64 directly
                     token_id: token_id.to_string(),
                     mode: TransactionMode::Bilateral,
                     nonce: Vec::new(),
@@ -467,7 +472,7 @@ impl TokenSDK<IdentitySDK> {
 
                 // Create the operation
                 let op = Operation::Mint {
-                    amount: Balance::new(*amount),
+                    amount: Balance::new(*amount), // Use u64 directly
                     token_id: token_id.to_string(),
                     authorized_by: "authority".to_string(),
                     proof_of_authorization: Vec::new(),
@@ -522,7 +527,7 @@ impl TokenSDK<IdentitySDK> {
 
                 // Create the operation
                 let op = Operation::Burn {
-                    amount: Balance::new(*amount),
+                    amount: Balance::new(*amount), // Use u64 directly
                     token_id: token_id.to_string(),
                     proof_of_ownership: Vec::new(),
                     message: "Burn operation via TokenSDK".to_string(),
@@ -631,7 +636,7 @@ impl TokenSDK<IdentitySDK> {
     }
 
     /// Check if an address has sufficient ROOT for an operation
-    pub fn has_sufficient_root(&self, address: &str, required_amount: i64) -> bool {
+    pub fn has_sufficient_root(&self, address: &str, required_amount: u64) -> bool {
         let current_balance = self.get_token_balance(address, "ROOT");
         current_balance.value() >= required_amount
     }
@@ -733,14 +738,14 @@ impl TokenSDK<IdentitySDK> {
     /// Validate and adjust fees based on network conditions
     pub async fn adjust_fees(&self, network_load: f64) -> Result<(), DsmError> {
         let mut root_token = self.root_token.write();
-        
+
         // Dynamic fee adjustment based on network load
         let mut new_schedule = HashMap::new();
         for (op_type, base_fee) in root_token.fee_schedule.iter() {
-            let adjusted_fee = (base_fee.value() as f64 * (1.0 + network_load * 0.1)) as i64;
+            let adjusted_fee = (base_fee.value() as f64 * (1.0 + network_load * 0.1)) as u64;
             new_schedule.insert(op_type.clone(), Balance::new(adjusted_fee));
         }
-        
+
         root_token.fee_schedule = new_schedule;
         Ok(())
     }
@@ -748,21 +753,24 @@ impl TokenSDK<IdentitySDK> {
     /// Verify sufficient balance for operation and fee
     pub fn verify_operation_feasibility(
         &self,
-        from_address: &str, 
+        from_address: &str,
         operation: &TokenOperation,
-        operation_type: &str
+        operation_type: &str,
     ) -> Result<(), DsmError> {
         let fee = self.calculate_fee(operation_type);
-        let total_required = match operation {
+        let total_required: u64 = match operation {
             TokenOperation::Transfer { amount, .. } => *amount + fee.value(),
             TokenOperation::Burn { amount, .. } => *amount + fee.value(),
-            _ => fee.value()
+            _ => fee.value(),
         };
 
         if !self.has_sufficient_root(from_address, total_required) {
             return Err(DsmError::validation(
-                format!("Insufficient ROOT balance for operation and fee. Required: {}", total_required),
-                None::<std::convert::Infallible>
+                format!(
+                    "Insufficient ROOT balance for operation and fee. Required: {}",
+                    total_required
+                ),
+                None::<std::convert::Infallible>,
             ));
         }
 
@@ -772,13 +780,13 @@ impl TokenSDK<IdentitySDK> {
     /// Validate a token operation before execution
     pub fn validate_token_operation(&self, operation: &TokenOperation) -> Result<(), DsmError> {
         match operation {
-            TokenOperation::Transfer { amount, .. } | 
-            TokenOperation::Burn { amount, .. } |
-            TokenOperation::Mint { amount, .. } => {
-                if *amount <= 0 {
+            TokenOperation::Transfer { amount, .. }
+            | TokenOperation::Burn { amount, .. }
+            | TokenOperation::Mint { amount, .. } => {
+                if *amount == 0 {
                     return Err(DsmError::validation(
                         "Amount must be positive",
-                        None::<std::convert::Infallible>
+                        None::<std::convert::Infallible>,
                     ));
                 }
             }
@@ -786,13 +794,13 @@ impl TokenSDK<IdentitySDK> {
                 // Validate creation params
                 return Err(DsmError::validation(
                     "Token creation requires proper authorization",
-                    None::<std::convert::Infallible>
+                    None::<std::convert::Infallible>,
                 ));
             }
             TokenOperation::Lock { .. } | TokenOperation::Unlock { .. } => {
                 return Err(DsmError::validation(
                     "Lock/Unlock operations not yet implemented",
-                    None::<std::convert::Infallible>
+                    None::<std::convert::Infallible>,
                 ));
             }
         }
@@ -803,7 +811,7 @@ impl TokenSDK<IdentitySDK> {
     pub async fn recover_from_failed_operation(
         &self,
         operation: &TokenOperation,
-        error: &DsmError
+        error: &DsmError,
     ) -> Result<(), DsmError> {
         // Log the error for analysis
         log::error!("Operation failed: {:?} with error: {}", operation, error);
@@ -814,15 +822,15 @@ impl TokenSDK<IdentitySDK> {
                 self.update_metadata().await?;
                 Ok(())
             }
-            
-            DsmError::Validation { .. } |
-            DsmError::InvalidParameter(_) |
-            DsmError::InvalidOperation(_) => {
+
+            DsmError::Validation { .. }
+            | DsmError::InvalidParameter(_)
+            | DsmError::InvalidOperation(_) => {
                 // For validation errors, verify conservation
                 if !self.validate_token_conservation().await? {
                     return Err(DsmError::Validation {
                         context: "Token conservation violation detected".to_string(),
-                        source: None
+                        source: None,
                     });
                 }
                 Ok(())
@@ -843,7 +851,6 @@ impl TokenSDK<IdentitySDK> {
         }
     }
 }
-
 
 #[async_trait::async_trait]
 impl TokenManager for TokenSDK<IdentitySDK> {
@@ -871,7 +878,7 @@ impl TokenManager for TokenSDK<IdentitySDK> {
     async fn validate_token_conservation(&self) -> Result<bool, DsmError> {
         // For ROOT tokens, validate that circulating supply matches sum of all balances
         let balances = self.balances.read();
-        let mut total_root_balance: i64 = 0;
+        let mut total_root_balance: u64 = 0;
 
         for (_, address_balances) in balances.iter() {
             if let Some(root_balance) = address_balances.get("ROOT") {
@@ -881,6 +888,7 @@ impl TokenManager for TokenSDK<IdentitySDK> {
 
         let root_token = self.root_token.read();
 
+        // Conservation property: sum of all balances equals circulating supply
         // Conservation property: sum of all balances equals circulating supply
         let supply_conservation = total_root_balance == root_token.circulating_supply.value();
 

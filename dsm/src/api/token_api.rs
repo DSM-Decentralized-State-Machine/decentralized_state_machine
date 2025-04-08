@@ -1,11 +1,11 @@
+use std::{collections::HashMap, fs, path::PathBuf};
+
+use lazy_static::lazy_static;
+use parking_lot::RwLock;
+
 use crate::types::token_types::{
     Balance, Token, TokenMetadata, TokenStatus, TokenSupply, TokenType,
 };
-use lazy_static::lazy_static;
-use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum DsmError {
@@ -147,8 +147,8 @@ pub fn create_token(
     name: &str,
     symbol: &str,
     decimals: u8,
-    initial_supply: i64,
-    max_supply: Option<i64>,
+    initial_supply: u64,
+    max_supply: Option<u64>,
 ) -> Result<String, DsmError> {
     // Create token metadata
     let metadata = TokenMetadata::new(
@@ -166,7 +166,7 @@ pub fn create_token(
         source: Some(Box::new(e)),
     })?;
 
-    // Create initial balance with proper decimal scaling
+    // Create initial balance
     let balance = Balance::new(initial_supply);
 
     // Create token supply info

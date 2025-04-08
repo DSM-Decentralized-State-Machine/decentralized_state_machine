@@ -3,6 +3,7 @@
 // This module provides functionality to connect to and interact with
 // DSM Storage Nodes for unilateral transactions and DLVs.
 
+
 use crate::types::error::DsmError;
 // These imports are conditionally used based on feature flags
 use crate::communication::storage_cache::StorageCache;
@@ -14,7 +15,7 @@ use crate::types::operations::Operation;
 use crate::types::operations::Ops;
 use crate::types::state_types::State;
 use crate::types::token_types::Token;
-use crate::vault::{DeterministicLimboVault, VaultStatus};
+use crate::vault::{LimboVault, VaultState, FulfillmentProof, VaultStatus};
 #[cfg(feature = "reqwest")]
 // LimboVault is used directly from the re-export
 use crate::InboxEntry;
@@ -72,7 +73,7 @@ pub struct StorageNodeClient {
     /// Cache of recently accessed vaults
     /// Reduces network load for vault operations
     #[allow(dead_code)]
-    vault_cache: RwLock<HashMap<String, DeterministicLimboVault>>,
+    vault_cache: RwLock<HashMap<String, LimboVault>>,
 
     /// Advanced cache for persistent offline operation
     storage_cache: Arc<StorageCache>,
@@ -95,7 +96,7 @@ pub struct StorageNodeClient {
     inbox_cache: RwLock<HashMap<String, Vec<InboxEntry>>>,
 
     /// Cache of recently accessed vaults
-    vault_cache: RwLock<HashMap<String, DeterministicLimboVault>>,
+    vault_cache: RwLock<HashMap<String, LimboVault>>,
 
     /// Advanced cache for persistent offline operation
     storage_cache: Arc<StorageCache>,
@@ -816,23 +817,23 @@ impl StorageNodeClient {
     /// * `Result<(), DsmError>` - Success or an error
     pub async fn store_vault(
         &self,
-        vault: &DeterministicLimboVault,
+        vault: &LimboVault,
         creator_signature: &[u8],
     ) -> Result<(), DsmError> {
         // Create serializable vault data with the appropriate status representation
-        let status_str = match vault.status() {
-            VaultStatus::Active => "active",
-            VaultStatus::Claimed => "claimed",
-            VaultStatus::Revoked => "revoked",
-            VaultStatus::Expired => "expired",
+        let status_str = match vault.state {
+            VaultState::Limbo => "active",
+            VaultState::Claimed { .. } => "claimed",
+            VaultState::Invalidated { .. } => "revoked",
+            VaultState::Unlocked { .. } => "unlocked",
         };
 
         let vault_data = serde_json::json!({
             "vault": {
-                "id": vault.id(),
-                "creator_id": vault.creator_id(), // Use the creator_id getter
+                "id": vault.id,
+                "creator_id": hex::encode(&vault.creator_public_key), // Convert public key to hex
                 "status": status_str,
-                "recipient_id": vault.recipient_id(),
+                "recipient_id": vault.intended_recipient.as_ref().map(hex::encode).unwrap_or_default(),
                 // Additional fields as needed by API
                 "timestamp": SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -873,7 +874,7 @@ impl StorageNodeClient {
         // Update cache for local vault availability
         {
             let mut cache = self.vault_cache.write().await;
-            cache.insert(vault.id().to_string(), vault.clone());
+            cache.insert(vault.id.clone(), vault.clone());
         }
 
         Ok(())
@@ -888,11 +889,11 @@ impl StorageNodeClient {
     /// * `vault_id` - Cryptographic identifier of the vault
     ///
     /// # Returns
-    /// * `Result<Option<DeterministicLimboVault>, DsmError>` - The vault if found
+    /// * `Result<Option<LimboVault>, DsmError>` - The vault if found
     pub async fn get_vault(
         &self,
         vault_id: &str,
-    ) -> Result<Option<DeterministicLimboVault>, DsmError> {
+    ) -> Result<Option<LimboVault>, DsmError> {
         // Check cache first for reduced network overhead
         {
             let cache = self.vault_cache.read().await;
@@ -939,13 +940,33 @@ impl StorageNodeClient {
                 source: Some(Box::new(e)),
             })?;
 
-        // Convert JSON status to VaultStatus enum with robust fallback
-        let _status = match vault_json["status"].as_str().unwrap_or("active") {
-            "active" => VaultStatus::Active,
-            "claimed" => VaultStatus::Claimed,
-            "revoked" => VaultStatus::Revoked,
-            "expired" => VaultStatus::Expired,
-            _ => VaultStatus::Active, // Default to Active for unknown status values
+        // Convert JSON status to VaultState enum with robust fallback
+        let vault_state = match vault_json["status"].as_str().unwrap_or("active") {
+            "active" => VaultState::Limbo,
+            "claimed" => {
+                VaultState::Claimed {
+                    claimed_state_number: vault_json["claimed_state_number"].as_u64().unwrap_or(0),
+                    claimant: Vec::new(), // Would need the actual claimant data
+                    claim_proof: Vec::new(), // Would need the actual proof data
+                }
+            },
+            "revoked" => {
+                VaultState::Invalidated {
+                    invalidated_state_number: vault_json["invalidated_state_number"].as_u64().unwrap_or(0),
+                    reason: vault_json["invalidation_reason"].as_str().unwrap_or("").to_string(),
+                    creator_signature: Vec::new(), // Would need the actual signature data
+                }
+            },
+            "unlocked" => {
+                VaultState::Unlocked {
+                    unlocked_state_number: vault_json["unlocked_state_number"].as_u64().unwrap_or(0),
+                    fulfillment_proof: FulfillmentProof::TimeProof {
+                        reference_state: Vec::new(), // Would need the actual reference state
+                        state_proof: Vec::new(), // Would need the actual proof
+                    },
+                }
+            },
+            _ => VaultState::Limbo, // Default to Limbo for unknown status values
         };
 
         // Parse content_type with proper fallback
@@ -955,43 +976,57 @@ impl StorageNodeClient {
             .to_string();
 
         // Create vault from available information
-        // Get the vault's condition type from the API response
-        let condition = match vault_json["condition_type"].as_str().unwrap_or("time") {
-            "time" => {
-                let time = vault_json["unlock_time"].as_u64().unwrap_or(
-                    // Default to current time if not specified
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                );
-                crate::vault::VaultCondition::Time(time)
-            }
-            "event" => {
-                // For event-based conditions, create an empty condition
-                // In a real implementation, we would parse the event data from the API
-                crate::vault::VaultCondition::Event(vec![])
-            }
-            _ => crate::vault::VaultCondition::Time(0), // Default to immediate unlock
-        };
-
         // Extract required data fields with safe defaults
-        let creator_id = vault_json["creator_id"].as_str().unwrap_or("").to_string();
-        let recipient_id = vault_json["recipient_id"]
+        let vault_id = vault_json["id"].as_str().unwrap_or("").to_string();
+        let creator_id = vault_json["creator_id"].as_str().unwrap_or("");
+        let creator_public_key = hex::decode(creator_id).unwrap_or_default();
+        
+        let recipient_id = vault_json["recipient_id"].as_str().unwrap_or("");
+        let intended_recipient = if !recipient_id.is_empty() {
+            Some(hex::decode(recipient_id).unwrap_or_default())
+        } else {
+            None
+        };
+        
+        let content_type = vault_json["content_type"]
             .as_str()
-            .unwrap_or("")
+            .unwrap_or("application/octet-stream")
             .to_string();
-        let data = vault_json["data"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|v| v.as_u64().unwrap_or(0) as u8)
-                    .collect::<Vec<u8>>()
-            })
-            .unwrap_or_default();
-
-        // Create a new vault with the data we have
-        let vault = DeterministicLimboVault::new(&creator_id, &recipient_id, data, condition);
+            
+        let created_at_state = vault_json["created_at_state"].as_u64().unwrap_or(0);
+        
+        // In a real implementation, we'd extract actual encrypted content
+        let encrypted_content = crate::vault::EncryptedContent {
+            encapsulated_key: Vec::new(),
+            encrypted_data: Vec::new(),
+            nonce: Vec::new(),
+            aad: Vec::new(),
+        };
+        
+        // Use a default Pedersen commitment for now
+        use crate::crypto::pedersen::PedersenCommitment;
+        
+        // Create the vault structure with available fields
+        // This is a very simplified version that wouldn't work in production
+        let vault = LimboVault {
+            id: vault_id,
+            created_at_state,
+            creator_public_key,
+            // This would need to be properly extracted in a real implementation
+            fulfillment_condition: crate::vault::FulfillmentMechanism::TimeRelease {
+                unlock_time: 0,
+                reference_states: Vec::new(),
+            },
+            intended_recipient,
+            state: vault_state,
+            content_type,
+            encrypted_content,
+            content_commitment: PedersenCommitment::default(),
+            parameters_hash: Vec::new(),
+            creator_signature: Vec::new(),
+            verification_positions: Vec::new(),
+            reference_state_hash: Vec::new(),
+        };
 
         // Create a new vault with the status from the API response
         // Note: We can't directly modify private fields like id or status
@@ -1001,7 +1036,7 @@ impl StorageNodeClient {
         // Update cache
         {
             let mut cache = self.vault_cache.write().await;
-            cache.insert(vault.id().to_string(), vault.clone());
+            cache.insert(vault.id.clone(), vault.clone());
         }
 
         Ok(Some(vault))
@@ -1084,19 +1119,27 @@ impl StorageNodeClient {
             if let Some(vault) = cache.get_mut(vault_id) {
                 // We can't directly modify the status field as it's private
                 // In a real implementation, we would have a method to update the status
-                // For now, we'll remove the old vault and create a new one with the updated status
-                let creator_id = vault.creator_id().to_string();
-                let recipient_id = vault.recipient_id().to_string();
-                let data = vault.data().to_vec();
-                let condition = vault.condition().clone();
-
-                // Create a new vault with the same data but updated status
-                let mut new_vault =
-                    DeterministicLimboVault::new(&creator_id, &recipient_id, data, condition);
-
-                // Update the status of the vault using the provided method
-                new_vault.set_status(new_status);
-                *vault = new_vault;
+                // For now, let's just update the vault's state directly
+                vault.state = match new_status {
+                    VaultStatus::Active => VaultState::Limbo,
+                    VaultStatus::Claimed => VaultState::Claimed {
+                        claimed_state_number: 0,
+                        claimant: Vec::new(),
+                        claim_proof: Vec::new(),
+                    },
+                    VaultStatus::Revoked => VaultState::Invalidated {
+                        invalidated_state_number: 0,
+                        reason: String::new(),
+                        creator_signature: Vec::new(),
+                    },
+                    VaultStatus::Expired => VaultState::Unlocked {
+                        unlocked_state_number: 0,
+                        fulfillment_proof: FulfillmentProof::TimeProof {
+                            reference_state: Vec::new(),
+                            state_proof: Vec::new(),
+                        },
+                    },
+                };
             }
         }
 

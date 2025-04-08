@@ -4,22 +4,22 @@
 //! whitepaper section 14. It enables complex transaction logic with security guarantees,
 //! while avoiding the gas costs and computational overhead of traditional smart contracts.
 
-use crate::types::token_types::Balance;
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::crypto::kyber;
-use crate::types::error::DsmError;
-use crate::types::operations::Operation;
-use crate::types::state_types::State;
+use blake3::Hasher; // Import Hasher directly
+use serde::{Deserialize, Serialize};
 
 // Fix imports to use the algorithms submodule
 use crate::core::state_machine::random_walk::algorithms::{
     generate_positions, generate_seed, verify_positions, Position,
 };
-use blake3::Hasher; // Import Hasher directly
-use serde::{Deserialize, Serialize};
+use crate::{
+    crypto::kyber,
+    types::{error::DsmError, operations::Operation, state_types::State, token_types::Balance},
+};
 
 /// Commitment types for smart commitments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ pub enum CommitmentCondition {
         /// Parameter name to check
         parameter_name: String,
         /// Threshold value
-        threshold: i64,
+        threshold: u64,
         /// Comparison operator
         operator: ThresholdOperator,
     },
@@ -93,7 +93,7 @@ pub enum ThresholdOperator {
 /// Evaluation context for smart commitment conditions
 pub struct CommitmentContext {
     /// Parameter values for evaluation
-    parameters: HashMap<String, i64>,
+    parameters: HashMap<String, u64>,
 
     /// External data hashes
     external_hashes: HashMap<String, Vec<u8>>,
@@ -120,7 +120,7 @@ impl CommitmentContext {
     }
 
     /// Set a parameter value
-    pub fn set_parameter(&mut self, name: &str, value: i64) -> &mut Self {
+    pub fn set_parameter(&mut self, name: &str, value: u64) -> &mut Self {
         self.parameters.insert(name.to_string(), value);
         self
     }
@@ -176,6 +176,12 @@ pub struct SmartCommitment {
 
     /// Amount associated with the commitment
     pub amount: u64,
+
+    pub value: u64,
+    parameters: HashMap<String, String>,
+    signatures: Vec<(Vec<u8>, Vec<u8>)>,
+    execution_time: Option<u64>,
+    verification_hash: Vec<u8>,
 }
 
 impl SmartCommitment {
@@ -290,6 +296,11 @@ impl SmartCommitment {
             commitment_type,
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
 
         // Generate verification positions
@@ -400,7 +411,7 @@ impl SmartCommitment {
         // Create transfer operation with proper parameters
         let operation = Operation::Transfer {
             recipient: hex::encode(&recipient),
-            amount: crate::types::token_types::Balance::new(amount as i64),
+            amount: crate::types::token_types::Balance::new(amount),
             to_address: String::new(),
             to: String::new(),
             token_id: String::new(),
@@ -427,6 +438,11 @@ impl SmartCommitment {
             commitment_type,
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
 
         // Generate verification positions
@@ -465,7 +481,7 @@ impl SmartCommitment {
 
         let operation = Operation::Transfer {
             recipient: hex::encode(&recipient),
-            amount: crate::types::token_types::Balance::new(amount as i64),
+            amount: crate::types::token_types::Balance::new(amount),
             to_address: String::new(),
             to: String::new(),
             token_id: String::new(),
@@ -488,6 +504,11 @@ impl SmartCommitment {
             },
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
         Ok(commitment)
     }
@@ -515,7 +536,7 @@ impl SmartCommitment {
 
         let operation = Operation::Transfer {
             recipient: hex::encode(&recipient),
-            amount: Balance::new(amount as i64),
+            amount: Balance::new(amount),
             to_address: "".to_string(),
             to: "".to_string(),
             token_id: "".to_string(),
@@ -535,6 +556,11 @@ impl SmartCommitment {
             commitment_type: CommitmentType::Recurring { period, end_date },
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
         Ok(commitment)
     }
@@ -584,7 +610,7 @@ impl SmartCommitment {
         // Default to a transfer operation
         let operation = Operation::Transfer {
             recipient: hex::encode(&recipient),
-            amount: crate::types::token_types::Balance::new(amount as i64),
+            amount: crate::types::token_types::Balance::new(amount),
             to_address: String::new(),
             to: String::new(),
             token_id: String::new(),
@@ -607,6 +633,11 @@ impl SmartCommitment {
             commitment_type,
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
 
         // Generate verification positions
@@ -660,7 +691,7 @@ impl SmartCommitment {
         // Default to a transfer operation
         let operation = Operation::Transfer {
             recipient: hex::encode(&recipient),
-            amount: crate::types::token_types::Balance::new(amount as i64),
+            amount: crate::types::token_types::Balance::new(amount),
             to_address: String::new(),
             to: String::new(),
             token_id: String::new(),
@@ -683,6 +714,11 @@ impl SmartCommitment {
             commitment_type,
             recipient,
             amount,
+            value: 0,
+            parameters: HashMap::new(),
+            signatures: Vec::new(),
+            execution_time: None,
+            verification_hash: Vec::new(),
         };
 
         // Generate verification positions
@@ -1042,8 +1078,17 @@ impl SmartCommitment {
 
         Ok(commitment)
     }
-}
 
+    // Update method signatures to use u64
+    pub fn with_value(&mut self, value: u64) -> &mut Self {
+        self.value = value;
+        self
+    }
+
+    pub fn verify_amount(&self, amount: u64) -> bool {
+        self.value == amount
+    }
+}
 /// Reference to stored smart commitment
 #[derive(Debug, Clone)]
 pub struct SmartCommitmentReference {

@@ -9,6 +9,8 @@ pub mod commitments;
 pub mod common;
 pub mod core;
 pub mod crypto;
+pub mod cpta;
+pub mod identity;
 pub mod crypto_verification;
 pub mod interfaces;
 pub mod merkle;

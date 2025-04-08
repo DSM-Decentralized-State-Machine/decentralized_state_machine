@@ -4,20 +4,23 @@
 //! leveraging quantum-resistant Pedersen commitments, post-quantum keypairs,
 //! and Content-Addressed Token Policy Anchors (CTPA) for token policy enforcement.
 
-use crate::crypto::kyber::generate_kyber_keypair;
-use crate::crypto::sphincs::generate_sphincs_keypair;
-// Blake3 is imported directly from the crate
-// Use the existing Pedersen implementation with correct types
-use crate::crypto::pedersen::{PedersenCommitment, PedersenParams, SecurityLevel};
-use crate::policy::policy_types::{PolicyAnchor, PolicyFile};
+use std::collections::HashSet;
 
-
-use crate::types::error::DsmError;
-use crate::types::token_types::{Balance, Token, TokenStatus};
 use blake3;
 use rand::{rngs::OsRng, RngCore};
 use sha3::{Digest, Sha3_512};
-use std::collections::HashSet;
+
+// Blake3 is imported directly from the crate
+// Use the existing Pedersen implementation with correct types
+use crate::crypto::pedersen::{PedersenCommitment, PedersenParams, SecurityLevel};
+use crate::{
+    crypto::{kyber::generate_kyber_keypair, sphincs::generate_sphincs_keypair},
+    types::{
+        error::DsmError,
+        policy_types::{PolicyAnchor, PolicyFile},
+        token_types::{Balance, Token, TokenStatus},
+    },
+};
 
 /// Single partial share or partial commit from each participant
 #[derive(Debug, Clone)]
@@ -109,7 +112,7 @@ pub fn create_token_genesis(
 
     // Create Pedersen parameters with standard security level
     let params = PedersenParams::new(SecurityLevel::Standard128);
-    let mut rng = rand::thread_rng();
+    let mut rng_thread = rand::thread_rng();
 
     // Implement the "hash sandwich" approach as described in whitepaper section 5.2.1
     // First hash with SHA-3 for quantum resistance
@@ -119,7 +122,8 @@ pub fn create_token_genesis(
 
     // Generate random data and create Pedersen commitment using the correct method
     // PedersenCommitment::commit returns (commitment, randomness)
-    let (pedersen_commit, _) = PedersenCommitment::commit(&params, &token_data_hash, &mut rng)?;
+    let (pedersen_commit, _) =
+        PedersenCommitment::commit(&params, &token_data_hash, &mut rng_thread)?;
 
     // Final Blake3 hash to protect against future quantum attacks
     // The commitment_hash field is already properly implemented in PedersenCommitment
@@ -140,7 +144,8 @@ pub fn create_token_genesis(
         let sim_data_hash = sha3_hasher.finalize().to_vec();
 
         // Use the proper Pedersen commit method
-        let (sim_commitment, _) = PedersenCommitment::commit(&params, &sim_data_hash, &mut rng)?;
+        let (sim_commitment, _) =
+            PedersenCommitment::commit(&params, &sim_data_hash, &mut rng_thread)?;
         let sim_final_hash = blake3::hash(&sim_commitment.commitment.to_bytes_be())
             .as_bytes()
             .to_vec();
@@ -159,9 +164,9 @@ pub fn create_token_genesis(
     let token_entropy = build_token_entropy(&token_hash, &selected);
 
     // 6. Generate post-quantum SPHINCS+ and Kyber keys
-    let (sphincs_pk, sphincs_sk) = generate_sphincs_keypair();
-    let (kyb_pk, kyb_sk) = generate_kyber_keypair();
-    
+    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
+    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair();
+
     // 7. Process the policy file if provided
     let policy_anchor = if let Some(policy) = policy_file {
         Some(PolicyAnchor::from_policy(policy)?)
@@ -175,9 +180,9 @@ pub fn create_token_genesis(
         token_entropy,
         threshold,
         participants: participants_set,
-        signing_key_sphincs: sphincs_pk,
+        signing_key_sphincs: sphincs_public_key,
         // Store the kyber public/private as a tuple
-        kyber_keypair: (kyb_pk, kyb_sk),
+        kyber_keypair: (kyber_pub_key, kyber_secret_key),
         policy_anchor,
         contributions: selected
             .into_iter()
@@ -186,7 +191,7 @@ pub fn create_token_genesis(
                 verified: true,
             })
             .collect(),
-        signing_key: sphincs_sk,
+        signing_key: sphincs_private_key,
     };
 
     Ok(genesis)
@@ -216,9 +221,9 @@ pub fn derive_sub_token_genesis(
     let derived_entropy = hasher.finalize().to_vec();
 
     // Create new quantum keys for the sub-genesis
-    let (sphincs_pk, sphincs_sk) = generate_sphincs_keypair();
-    let (kyb_pk, kyb_sk) = generate_kyber_keypair();
-    
+    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
+    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair();
+
     // Process the policy file if provided, otherwise inherit from parent
     let policy_anchor = if let Some(policy) = policy_file {
         Some(PolicyAnchor::from_policy(policy)?)
@@ -231,14 +236,14 @@ pub fn derive_sub_token_genesis(
         token_entropy: derived_entropy,
         threshold: 1, // single "owner" for sub
         participants: HashSet::from([sub_id.to_string()]),
-        signing_key_sphincs: sphincs_pk,
-        kyber_keypair: (kyb_pk, kyb_sk),
+        signing_key_sphincs: sphincs_public_key,
+        kyber_keypair: (kyber_pub_key, kyber_secret_key),
         policy_anchor,
         contributions: vec![TokenContribution {
             data: sub_entropy.to_vec(),
             verified: true,
         }],
-        signing_key: sphincs_sk,
+        signing_key: sphincs_private_key,
     })
 }
 
@@ -253,7 +258,7 @@ pub fn create_token_from_genesis(
         // Create token with policy anchor
         let mut anchor_bytes = [0u8; 32];
         anchor_bytes.copy_from_slice(&policy_anchor.0[..]);
-        
+
         Token::new_with_policy(
             owner_id,
             genesis.token_hash.clone(),

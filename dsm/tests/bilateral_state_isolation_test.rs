@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 fn create_genesis(
     entropy: Vec<u8>,
     device_info: DeviceInfo,
-    initial_balance: i64,
+    initial_balance: u64,
 ) -> Result<State, DsmError> {
     let mut state = State::new_genesis(entropy, device_info);
     state.flags.insert(StateFlag::Recovered);
@@ -136,7 +136,7 @@ fn create_next_state(
 
             // Create a new balance with the added amount
             let mut new_balance = current_balance.clone();
-            new_balance.update(amount.value());
+            new_balance.update(amount.value(), true); // true indicates addition
             next_state
                 .token_balances
                 .insert(token_id.clone(), new_balance);
@@ -157,7 +157,7 @@ fn create_next_state(
 
                 // Create new balance with subtracted amount
                 let mut new_balance = current_balance.clone();
-                new_balance.update(-amount.value());
+                new_balance.update_sub(amount.value())?;
                 next_state
                     .token_balances
                     .insert(token_id.clone(), new_balance);
@@ -305,7 +305,7 @@ fn verify_transfer(operation: &Operation) -> Result<bool, DsmError> {
                 ));
             }
 
-            if amount.value() <= 0 {
+            if amount.value() == 0 {
                 return Err(DsmError::validation(
                     "Transfer amount must be positive",
                     None::<std::convert::Infallible>,

@@ -6,9 +6,11 @@
 //! - Token registry and supply tracking
 //! - Advanced token operations (transfer, mint, burn, lock)
 //! - Quantum-resistant token state evolution
-use crate::types::error::DsmError;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::types::error::DsmError;
 /// Token type representing the nature and properties of a token
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TokenType {
@@ -26,18 +28,18 @@ pub enum TokenType {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TokenSupply {
     /// Total fixed supply
-    pub total_supply: i64,
+    pub total_supply: u64,
     /// Current circulating supply
-    pub circulating_supply: i64,
+    pub circulating_supply: u64,
     /// Maximum allowed supply (can be None for unlimited)
-    pub max_supply: Option<i64>,
+    pub max_supply: Option<u64>,
     /// Minimum allowed supply (cannot go below this value)
-    pub min_supply: Option<i64>,
+    pub min_supply: Option<u64>,
 }
 
 impl TokenSupply {
     /// Create a new TokenSupply with fixed total supply
-    pub fn new(total_supply: i64) -> Self {
+    pub fn new(total_supply: u64) -> Self {
         Self {
             total_supply,
             circulating_supply: total_supply,
@@ -48,9 +50,9 @@ impl TokenSupply {
 
     /// Create a TokenSupply with flexible minting/burning parameters
     pub fn with_limits(
-        total_supply: i64,
-        max_supply: Option<i64>,
-        min_supply: Option<i64>,
+        total_supply: u64,
+        max_supply: Option<u64>,
+        min_supply: Option<u64>,
     ) -> Self {
         Self {
             total_supply,
@@ -61,13 +63,58 @@ impl TokenSupply {
     }
 
     /// Check if a supply change is within allowed limits
-    pub fn is_valid_supply_change(&self, change: i64) -> bool {
-        let new_supply = self.circulating_supply + change;
-        match (self.min_supply, self.max_supply) {
-            (Some(min), Some(max)) => new_supply >= min && new_supply <= max,
-            (Some(min), None) => new_supply >= min,
-            (None, Some(max)) => new_supply <= max,
-            (None, None) => true,
+    /// Returns true if applying the amount would keep supply within limits
+    pub fn is_valid_supply_change(&self, amount: u64, is_addition: bool) -> bool {
+        if is_addition {
+            // For additions, ensure we don't exceed maximum
+            let new_supply = self.circulating_supply.saturating_add(amount);
+            if let Some(max) = self.max_supply {
+                if new_supply > max {
+                    return false;
+                }
+            }
+            true
+        } else {
+            // For subtractions, ensure we don't go below minimum
+            // If attempting to decrease by more than current supply, it's invalid
+            if amount > self.circulating_supply {
+                return false;
+            }
+
+            let new_supply = self.circulating_supply - amount;
+            if let Some(min) = self.min_supply {
+                if new_supply < min {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+    
+    /// Check if a supply change using TokenAmount is within allowed limits
+    pub fn validate_supply_change(&self, amount: TokenAmount, is_mint: bool) -> bool {
+        if is_mint {
+            // Adding tokens - check against max_supply
+            let new_supply = self.circulating_supply.saturating_add(amount.value());
+            if let Some(max) = self.max_supply {
+                if new_supply > max {
+                    return false;
+                }
+            }
+            true
+        } else {
+            // Burning tokens - check against min_supply and circulating_supply
+            if amount.value() > self.circulating_supply {
+                return false;
+            }
+            
+            let new_supply = self.circulating_supply - amount.value();
+            if let Some(min) = self.min_supply {
+                if new_supply < min {
+                    return false;
+                }
+            }
+            true
         }
     }
 }
@@ -153,7 +200,7 @@ impl TokenMetadata {
         self.fields.insert(key.to_string(), value.to_string());
         self
     }
-    
+
     /// Add policy anchor
     pub fn with_policy_anchor(mut self, anchor: &str) -> Self {
         self.policy_anchor = Some(anchor.to_string());
@@ -166,28 +213,74 @@ impl TokenMetadata {
     }
 }
 
+/// Specialized token amount with non-negative invariants
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TokenAmount {
+    /// Non-negative token amount
+    value: u64,
+}
+
+impl TokenAmount {
+    /// Create a new TokenAmount with the given value
+    pub fn new(value: u64) -> Self {
+        Self { value }
+    }
+
+    /// Checked addition that prevents overflow
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        self.value.checked_add(other.value).map(Self::new)
+    }
+
+    /// Checked subtraction that maintains non-negative invariant
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        if self.value < other.value {
+            return None; // Prevents negative balance
+        }
+        Some(Self::new(self.value - other.value))
+    }
+
+    /// Saturating addition that never overflows
+    pub fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+
+    /// Saturating subtraction that never goes below zero
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self::new(self.value.saturating_sub(other.value))
+    }
+
+    /// Get the underlying value
+    pub fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl Default for TokenAmount {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 /// Core token balance type
 ///
-/// This implementation uses signed integers to represent balances,
-/// enabling both positive and negative delta values during state transitions.
-/// This is crucial for implementing the conservation of value invariant
-/// described in the whitepaper Section 10.
+/// This implementation uses unsigned integers to represent balances,
+/// enforcing non-negative value invariants in accordance with the
+/// conservation of value principle described in whitepaper Section 10.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Balance {
     /// Token value
-    value: i64,
+    value: u64,
     /// Locked portion of balance that cannot be spent
-    locked: i64,
+    locked: u64,
     /// Last update timestamp
     last_updated: u64,
     /// Ledger state hash referencing the last update
     state_hash: Option<Vec<u8>>,
-    pub(crate) amount: u64,
 }
 
 impl Balance {
     /// Create a new Balance
-    pub fn new(value: i64) -> Self {
+    pub fn new(value: u64) -> Self {
         Self {
             value,
             locked: 0,
@@ -196,12 +289,11 @@ impl Balance {
                 .unwrap_or_default()
                 .as_secs(),
             state_hash: None,
-            amount: if value >= 0 { value as u64 } else { 0 },
         }
     }
 
     /// Create a balance from a state
-    pub fn from_state(value: i64, state_hash: Vec<u8>) -> Self {
+    pub fn from_state(value: u64, state_hash: Vec<u8>) -> Self {
         Self {
             value,
             locked: 0,
@@ -210,28 +302,27 @@ impl Balance {
                 .unwrap_or_default()
                 .as_secs(),
             state_hash: Some(state_hash),
-            amount: if value >= 0 { value as u64 } else { 0 },
         }
     }
 
     /// Get the available balance (total minus locked)
-    pub fn available(&self) -> i64 {
-        self.value - self.locked
+    pub fn available(&self) -> u64 {
+        self.value.saturating_sub(self.locked)
     }
 
     /// Get the total balance value
-    pub fn value(&self) -> i64 {
+    pub fn value(&self) -> u64 {
         self.value
     }
 
     /// Get the locked balance
-    pub fn locked(&self) -> i64 {
+    pub fn locked(&self) -> u64 {
         self.locked
     }
 
     /// Lock a portion of the balance
-    pub fn lock(&mut self, amount: i64) -> Result<(), DsmError> {
-        if amount <= 0 {
+    pub fn lock(&mut self, amount: u64) -> Result<(), DsmError> {
+        if amount == 0 {
             return Err(DsmError::validation(
                 "Lock amount must be positive",
                 None::<std::convert::Infallible>,
@@ -249,8 +340,8 @@ impl Balance {
     }
 
     /// Unlock a portion of the locked balance
-    pub fn unlock(&mut self, amount: i64) -> Result<(), DsmError> {
-        if amount <= 0 {
+    pub fn unlock(&mut self, amount: u64) -> Result<(), DsmError> {
+        if amount == 0 {
             return Err(DsmError::validation(
                 "Unlock amount must be positive",
                 None::<std::convert::Infallible>,
@@ -267,16 +358,52 @@ impl Balance {
         Ok(())
     }
 
-    /// Update the balance
-    pub fn update(&mut self, delta: i64) {
-        self.value += delta;
-        // Critical: Ensure amount field stays in sync with value
-        self.amount = if self.value >= 0 {
-            self.value as u64
+    /// Update the balance with an amount and operation type
+    /// This provides a type-safe interface with explicit operation semantics
+    pub fn update(&mut self, amount: u64, is_addition: bool) {
+        if is_addition {
+            self.value = self.value.saturating_add(amount);
         } else {
-            0
-        };
+            self.value = self.value.saturating_sub(amount);
+        }
         self.update_timestamp();
+    }
+    
+    /// Update balance with TokenAmount and operation type
+    /// This provides a safer and more semantically accurate way to update balances
+    pub fn update_with_amount(&mut self, amount: TokenAmount, is_addition: bool) -> Result<(), DsmError> {
+        if is_addition {
+            self.value = self.value.saturating_add(amount.value());
+        } else {
+            if amount.value() > self.value {
+                return Err(DsmError::validation(
+                    "Insufficient balance for deduction",
+                    None::<std::convert::Infallible>,
+                ));
+            }
+            self.value -= amount.value();
+        }
+        self.update_timestamp();
+        Ok(())
+    }
+
+    /// Update the balance with an unsigned delta (always an addition)
+    pub fn update_add(&mut self, delta: u64) {
+        self.value = self.value.saturating_add(delta);
+        self.update_timestamp();
+    }
+
+    /// Update the balance with an unsigned delta (always a subtraction)
+    pub fn update_sub(&mut self, delta: u64) -> Result<(), DsmError> {
+        if delta > self.value {
+            return Err(DsmError::validation(
+                "Insufficient balance for deduction",
+                None::<std::convert::Infallible>,
+            ));
+        }
+        self.value -= delta;
+        self.update_timestamp();
+        Ok(())
     }
 
     /// Update the timestamp
@@ -289,7 +416,7 @@ impl Balance {
 
     /// Format balance with appropriate decimals
     pub fn formatted(&self, decimals: u8) -> String {
-        let factor = 10i64.pow(decimals as u32) as f64;
+        let factor = 10u64.pow(decimals as u32) as f64;
         format!(
             "{:.precision$}",
             self.value as f64 / factor,
@@ -305,7 +432,7 @@ impl Balance {
 
     /// Convert to little-endian bytes for hashing
     pub fn to_le_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::with_capacity(24); // 8 bytes for each i64, 8 for timestamp
+        let mut result = Vec::with_capacity(24); // 8 bytes for each u64, 8 for timestamp
         result.extend_from_slice(&self.value.to_le_bytes());
         result.extend_from_slice(&self.locked.to_le_bytes());
         result.extend_from_slice(&self.last_updated.to_le_bytes());
@@ -345,7 +472,7 @@ impl TokenRegistry {
         );
 
         // Initialize with a fixed supply of 100 million tokens
-        let root_supply = TokenSupply::new(100_000_000 * 10i64.pow(18));
+        let root_supply = TokenSupply::new(100_000_000 * 10u64.pow(18));
 
         tokens.insert(native_token_id.clone(), root_metadata);
         supplies.insert(native_token_id.clone(), root_supply);
@@ -390,8 +517,8 @@ impl TokenRegistry {
         self.supplies.get(token_id)
     }
 
-    /// Update token supply
-    pub fn update_supply(&mut self, token_id: &str, delta: i64) -> Result<(), DsmError> {
+    /// Update token supply with unsigned amount and explicit addition/subtraction flag
+    pub fn update_supply(&mut self, token_id: &str, amount: u64, is_addition: bool) -> Result<(), DsmError> {
         let supply = self.supplies.get_mut(token_id).ok_or_else(|| {
             DsmError::validation(
                 format!("Token {} not found", token_id),
@@ -399,14 +526,20 @@ impl TokenRegistry {
             )
         })?;
 
-        if !supply.is_valid_supply_change(delta) {
+        if !supply.is_valid_supply_change(amount, is_addition) {
             return Err(DsmError::validation(
                 format!("Invalid supply change for token {}", token_id),
                 None::<std::convert::Infallible>,
             ));
         }
 
-        supply.circulating_supply += delta;
+        // Handle supply change with explicit operation semantics
+        if is_addition {
+            supply.circulating_supply = supply.circulating_supply.saturating_add(amount);
+        } else {
+            supply.circulating_supply = supply.circulating_supply.saturating_sub(amount);
+        }
+
         Ok(())
     }
 
@@ -469,8 +602,8 @@ pub struct CreateTokenParams {
     pub icon_url: Option<String>,
     pub metadata_uri: Option<String>,
     pub decimals: u8,
-    pub initial_supply: Option<i64>,
-    pub max_supply: Option<i64>,
+    pub initial_supply: Option<u64>,
+    pub max_supply: Option<u64>,
     pub policy_anchor: Option<String>,
 }
 
@@ -480,14 +613,14 @@ pub struct TokenFactory {
     /// Token registry
     pub registry: TokenRegistry,
     /// Fee in ROOT tokens for token creation
-    pub creation_fee: i64,
+    pub creation_fee: u64,
     /// Genesis state hash
     pub genesis_hash: Vec<u8>,
 }
 
 impl TokenFactory {
     /// Create a new TokenFactory
-    pub fn new(creation_fee: i64, genesis_hash: Vec<u8>) -> Self {
+    pub fn new(creation_fee: u64, genesis_hash: Vec<u8>) -> Self {
         Self {
             registry: TokenRegistry::new(),
             creation_fee,
@@ -496,12 +629,12 @@ impl TokenFactory {
     }
 
     /// Get creation fee
-    pub fn get_creation_fee(&self) -> i64 {
+    pub fn get_creation_fee(&self) -> u64 {
         self.creation_fee
     }
 
     /// Update creation fee
-    pub fn set_creation_fee(&mut self, fee: i64) {
+    pub fn set_creation_fee(&mut self, fee: u64) {
         self.creation_fee = fee;
     }
 }
@@ -516,7 +649,7 @@ pub enum TokenOperation {
         /// Initial token supply
         supply: TokenSupply,
         /// Creation fee in ROOT tokens
-        fee: i64,
+        fee: u64,
     },
     /// Transfer tokens between accounts
     Transfer {
@@ -525,7 +658,7 @@ pub enum TokenOperation {
         /// Recipient identity
         recipient: String,
         /// Amount to transfer
-        amount: i64,
+        amount: u64,
         /// Optional memo
         memo: Option<String>,
     },
@@ -536,21 +669,21 @@ pub enum TokenOperation {
         /// Recipient of the newly minted tokens
         recipient: String,
         /// Amount to mint
-        amount: i64,
+        amount: u64,
     },
     /// Burn (destroy) tokens
     Burn {
         /// Token ID to burn
         token_id: String,
         /// Amount to burn
-        amount: i64,
+        amount: u64,
     },
     /// Lock tokens for a specific purpose
     Lock {
         /// Token ID to lock
         token_id: String,
         /// Amount to lock
-        amount: i64,
+        amount: u64,
         /// Lock reason/purpose
         purpose: String,
     },
@@ -559,7 +692,7 @@ pub enum TokenOperation {
         /// Token ID to unlock
         token_id: String,
         /// Amount to unlock
-        amount: i64,
+        amount: u64,
         /// Original lock purpose
         purpose: String,
     },
@@ -609,9 +742,15 @@ impl Token {
             policy_anchor: None,
         }
     }
-    
+
     /// Create a new token with policy anchor
-    pub fn new_with_policy(owner_id: &str, token_data: Vec<u8>, metadata: Vec<u8>, balance: Balance, policy_anchor: [u8; 32]) -> Self {
+    pub fn new_with_policy(
+        owner_id: &str,
+        token_data: Vec<u8>,
+        metadata: Vec<u8>,
+        balance: Balance,
+        policy_anchor: [u8; 32],
+    ) -> Self {
         let id = format!(
             "{}-{}",
             owner_id,
@@ -682,20 +821,25 @@ impl Token {
     pub fn is_valid(&self) -> bool {
         self.status == TokenStatus::Active
     }
-    
+
     /// Get policy anchor
     pub fn policy_anchor(&self) -> Option<&[u8; 32]> {
         self.policy_anchor.as_ref()
     }
-    
+
     /// Set policy anchor
     pub fn set_policy_anchor(&mut self, anchor: [u8; 32]) {
         self.policy_anchor = Some(anchor);
     }
 
-    /// Update token balance
-    pub fn update_balance(&mut self, delta: i64) {
-        self.balance.update(delta);
+    /// Update token balance with explicit operation semantics
+    pub fn update_balance(&mut self, amount: u64, is_addition: bool) {
+        self.balance.update(amount, is_addition);
+    }
+    
+    /// Update token balance with TokenAmount
+    pub fn update_balance_with_amount(&mut self, amount: TokenAmount, is_addition: bool) -> Result<(), DsmError> {
+        self.balance.update_with_amount(amount, is_addition)
     }
 }
 

@@ -4,38 +4,19 @@
 //! This module ensures that token operations are integrated directly into state transitions,
 //! providing atomic guarantees for token balances and state evolution.
 
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
-// Fix the imports to use the correct policy types
-use crate::policy::policy_store::PolicyStore;
-use crate::policy::policy_types::PolicyAnchor;
-use crate::policy::policy_verification::{verify_policy, PolicyVerificationResult};
-use crate::types::error::DsmError;
-use crate::types::operations::{Operation, Ops};
-use crate::types::state_types::State;
-use crate::types::token_types::{Balance, Token, TokenStatus};
-
+use std::sync::Arc;
+use parking_lot::RwLock;
 use tokio::runtime::Runtime;
 
-// We're removing duplicate token type definitions and using the imported ones instead
-
-// These are token extensions for methods that aren't available in the type definitions
-// They are implemented on the imported types
-
-#[derive(Debug)]
-pub struct TokenTransfer {
-    pub sender: Vec<u8>,
-    pub recipient: Vec<u8>,
-    pub amount: u64,
-    pub token_id: String,
-    pub timestamp: u64,
-}
-
-/// Helper for returning an insufficient-balance error
-pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
-    DsmError::token_error(message.into(), None::<std::io::Error>)
-}
+use crate::cpta::PolicyStore;
+use crate::types::{
+    error::DsmError,
+    state_types::State,
+    token_types::{Balance, Token, TokenStatus},
+   
+};
 
 /// TokenStateManager implements atomic state updates for tokens as specified in the whitepaper.
 /// This integrates token balances directly in state transitions (Section 9).
@@ -46,19 +27,70 @@ pub struct TokenStateManager {
 
     /// Balance cache for performance optimization
     balance_cache: Arc<RwLock<HashMap<String, Balance>>>,
-    
+
     /// Policy store for token policy verification
     policy_store: Option<Arc<PolicyStore>>,
-    
+
     /// Runtime for async operations
     runtime: Option<Runtime>,
 }
+
+
+#[derive(Debug)]
+pub struct TokenTransfer {
+    pub sender: Vec<u8>,
+    pub recipient: Vec<u8>,
+    pub amount: u64,
+    pub token_id: String,
+    pub timestamp: u64,
+    // Add reference to token store and balance cache
+    pub(crate) token_store: Option<Arc<RwLock<HashMap<String, Token>>>>,
+    pub(crate) balance_cache: Option<Arc<RwLock<HashMap<String, Balance>>>>,
+}
+
+impl TokenTransfer {
+    pub fn new(sender: Vec<u8>, recipient: Vec<u8>, amount: u64, token_id: String) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Self {
+            sender,
+            recipient,
+            amount,
+            token_id,
+            timestamp,
+            token_store: None,
+            balance_cache: None,
+        }
+    }
+
+    // / Create a new TokenTransfer with token store and balance cache
+    pub fn with_stores(mut self, token_store: Arc<RwLock<HashMap<String, Token>>>, balance_cache: Arc<RwLock<HashMap<String, Balance>>>) -> Self {
+        self.token_store = Some(token_store);
+        self.balance_cache = Some(balance_cache);
+        self
+    }
+}
+
+/// Helper for returning an insufficient-balance error
+pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
+    DsmError::token_error(message.into(), None::<std::io::Error>)
+}
+
+
+
+// Imports
+use crate::cpta::policy_verification::{PolicyVerificationResult, verify_policy};
+use crate::types::operations::{Ops, Operation};
+use crate::types::policy_types::{Policy, PolicyAnchor};
 
 impl TokenStateManager {
     /// Create a new TokenStateManager
     pub fn new() -> Self {
         let runtime = Runtime::new().ok();
-        
+
         Self {
             token_store: Arc::new(RwLock::new(HashMap::new())),
             balance_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -66,15 +98,27 @@ impl TokenStateManager {
             runtime,
         }
     }
-    
+
     /// Create a new TokenStateManager with a policy store
     pub fn with_policy_store(policy_store: Arc<PolicyStore>) -> Self {
         let runtime = Runtime::new().ok();
-        
+
         Self {
             token_store: Arc::new(RwLock::new(HashMap::new())),
             balance_cache: Arc::new(RwLock::new(HashMap::new())),
             policy_store: Some(policy_store),
+            runtime,
+        }
+    }
+
+    /// Create a new TokenStateManager with a policy anchor
+    pub fn with_policy_anchor(_policy_anchor: &PolicyAnchor) -> Self {
+        let runtime = Runtime::new().ok();
+
+        Self {
+            token_store: Arc::new(RwLock::new(HashMap::new())),
+            balance_cache: Arc::new(RwLock::new(HashMap::new())),
+            policy_store: None, // No policy store available
             runtime,
         }
     }
@@ -111,7 +155,7 @@ impl TokenStateManager {
             }
             n >>= 1;
         }
-        
+
         // Use the proper SparseIndex type
         let sparse_index = crate::types::state_types::SparseIndex::new(indices);
 
@@ -163,7 +207,8 @@ impl TokenStateManager {
     ) -> Result<HashMap<String, Balance>, DsmError> {
         // First, verify the token policy if applicable
         self.verify_token_policy(operation)?;
-        
+
+        // Clone the current balances so we can modify them
         let mut new_balances = current_state.token_balances.clone();
 
         match operation {
@@ -173,38 +218,43 @@ impl TokenStateManager {
                 recipient,
                 ..
             } => {
-                // Get the sender's key from the device info
-                let sender_key = current_state.device_info.public_key.clone();
+                // Convert the sender's public key to a string key
+                let sender_pk = &current_state.device_info.public_key;
+                let sender_key = Self::make_balance_key(sender_pk, token_id);
 
-                // Use recipient as a string key directly, not trying to access device_info
-                let recipient_key = recipient.clone();
+                // `recipient` is assumed to be a `String`, so `.as_bytes()` gives us &[u8]
+                let recipient_key = Self::make_balance_key(recipient.as_bytes(), token_id);
 
+                // Retrieve the sender's balance
                 let sender_balance = new_balances
-                    .get(token_id)
-                    .ok_or_else(|| DsmError::not_found("Token", Some(token_id.clone())))?;
+                    .get(&sender_key)
+                    .cloned()
+                    .unwrap_or_else(|| Balance::new(0));
 
                 // Verify sufficient balance
                 if sender_balance.value() < amount.value() {
                     return Err(DsmError::insufficient_balance(
-                        token_id.clone(),
-                        sender_balance.value() as i64,
-                        amount.value() as i64,
+                        token_id.to_string(),
+                        sender_balance.value(),
+                        amount.value(),
                     ));
                 }
 
-                // Update balances atomically
-                let new_sender_balance = crate::types::token_types::Balance::new(sender_balance.value() - amount.value());
+                // Update the sender's balance
+                let new_sender_balance =
+                    Balance::new(sender_balance.value().saturating_sub(amount.value()));
+
+                // Retrieve the recipient's balance (default 0 if not found)
                 let recipient_balance = new_balances
                     .get(&recipient_key)
                     .cloned()
-                    .unwrap_or_else(|| crate::types::token_types::Balance::new(0));
+                    .unwrap_or_else(|| Balance::new(0));
 
+                // Update the recipient's balance
                 let new_recipient_balance =
-                    crate::types::token_types::Balance::new(recipient_balance.value() + amount.value());
+                    Balance::new(recipient_balance.value().saturating_add(amount.value()));
 
-                // Convert the Vec<u8> to a hex string as key
-                let sender_key_string = hex::encode(&sender_key);
-                new_balances.insert(sender_key_string, new_sender_balance);
+                new_balances.insert(sender_key, new_sender_balance);
                 new_balances.insert(recipient_key, new_recipient_balance);
             }
 
@@ -223,15 +273,19 @@ impl TokenStateManager {
                     ));
                 }
 
-                let recipient_key = format!("{}:{}", current_state.device_info.device_id, token_id);
-                let current_balance = new_balances
-                    .get(&recipient_key)
-                    .cloned()
-                    .unwrap_or_else(|| crate::types::token_types::Balance::new(0));
+                // We treat the current state's device as the one receiving the minted tokens
+                let owner_pk = &current_state.device_info.public_key;
+                let owner_key = Self::make_balance_key(owner_pk, token_id);
 
+                let current_balance = new_balances
+                    .get(&owner_key)
+                    .cloned()
+                    .unwrap_or_else(|| Balance::new(0));
+
+                // Increase the owner's balance
                 new_balances.insert(
-                    recipient_key,
-                    crate::types::token_types::Balance::new(current_balance.value() + amount.value()),
+                    owner_key,
+                    Balance::new(current_balance.value().saturating_add(amount.value())),
                 );
             }
 
@@ -249,56 +303,60 @@ impl TokenStateManager {
                     ));
                 }
 
-                let owner_key = format!("{}:{}", current_state.device_info.device_id, token_id);
+                // The token to be burned presumably belongs to the current state's device
+                let owner_pk = &current_state.device_info.public_key;
+                let owner_key = Self::make_balance_key(owner_pk, token_id);
+
                 let owner_balance = new_balances
                     .get(&owner_key)
                     .cloned()
-                    .unwrap_or_else(|| crate::types::token_types::Balance::new(0));
+                    .unwrap_or_else(|| Balance::new(0));
 
                 if owner_balance.value() < amount.value() {
                     return Err(DsmError::insufficient_balance(
-                        token_id.clone(),
-                        owner_balance.value() as i64,
-                        amount.value() as i64,
+                        token_id.to_string(),
+                        owner_balance.value(),
+                        amount.value(),
                     ));
                 }
 
-                new_balances.insert(
-                    owner_key,
-                    crate::types::token_types::Balance::new(owner_balance.value() - amount.value()),
-                );
+                // Subtract from the owner's balance
+                let new_owner_balance =
+                    Balance::new(owner_balance.value().saturating_sub(amount.value()));
+
+                new_balances.insert(owner_key, new_owner_balance);
             }
 
-            _ => {} // Other operations don't affect token balances
+            // Other operations may not affect token balances
+            _ => {}
         }
 
         Ok(new_balances)
     }
-    
+
     /// Verify that an operation complies with the pre-commitment parameters
-    /// 
+    ///
     /// This implements the pre-commitment verification described in whitepaper
     /// section 8, ensuring that operations adhere to previously committed parameters.
-    /// 
+    ///
     /// # Arguments
-    /// * `pre_commit` - The pre-commitment to verify against
-    /// * `operation` - The operation to verify
-    /// 
+    ///  `pre_commit` - The pre-commitment to verify against
+    ///  `operation` - The operation to verify
+    ///
     /// # Returns
-    /// * `Result<bool, DsmError>` - Whether the operation complies with the pre-commitment
+    ///  `Result<bool, DsmError>` - Whether the operation complies with the pre-commitment
     fn verify_precommitment_parameters(
         &self,
         pre_commit: &crate::types::state_types::PreCommitment,
         operation: &Operation,
     ) -> Result<bool, DsmError> {
-        // First, verify operation type matches the pre-commitment
         let matches_type = match operation {
             Operation::Transfer { .. } => pre_commit.operation_type == "transfer",
             Operation::Mint { .. } => pre_commit.operation_type == "mint",
             Operation::Burn { .. } => pre_commit.operation_type == "burn",
             Operation::LockToken { .. } => pre_commit.operation_type == "lock",
             Operation::UnlockToken { .. } => pre_commit.operation_type == "unlock",
-            _ => false, // Non-token operations don't match any token pre-commitment
+            _ => false,
         };
 
         if !matches_type {
@@ -307,129 +365,107 @@ impl TokenStateManager {
 
         // Check that operation matches fixed parameters
         let matches_fixed_params = match operation {
-            Operation::Transfer { token_id, recipient, .. } => {
-                // Check if token_id matches fixed parameter if present
-                let token_id_matches = if let Some(expected_token_id) = pre_commit.fixed_parameters.get("token_id") {
-                    token_id.as_bytes() == expected_token_id.as_slice()
-                } else {
-                    true // No constraint on token_id
-                };
+            Operation::Transfer {
+                token_id,
+                recipient,
+                ..
+            } => {
+                // If the pre-commit stores these fields as Vec<u8>, compare with as_bytes():
+                let token_id_matches =
+                    if let Some(expected_token_id) = pre_commit.fixed_parameters.get("token_id") {
+                        token_id.as_bytes() == &expected_token_id[..]
+                    } else {
+                        true
+                    };
 
-                // Check if recipient matches fixed parameter if present
-                let recipient_matches = if let Some(expected_recipient) = pre_commit.fixed_parameters.get("recipient") {
-                    recipient.as_bytes() == expected_recipient.as_slice()
+                let recipient_matches = if let Some(expected_recipient) =
+                    pre_commit.fixed_parameters.get("recipient")
+                {
+                    recipient.as_bytes() == &expected_recipient[..]
                 } else {
-                    true // No constraint on recipient
+                    true
                 };
 
                 token_id_matches && recipient_matches
-            },
+            }
             Operation::Mint { token_id, .. } => {
-                // Check if token_id matches fixed parameter if present
                 if let Some(expected_token_id) = pre_commit.fixed_parameters.get("token_id") {
-                    token_id.as_bytes() == expected_token_id.as_slice()
+                    token_id.as_bytes() == &expected_token_id[..]
                 } else {
-                    true // No constraint on token_id
+                    true
                 }
-            },
+            }
             Operation::Burn { token_id, .. } => {
-                // Check if token_id matches fixed parameter if present
                 if let Some(expected_token_id) = pre_commit.fixed_parameters.get("token_id") {
-                    token_id.as_bytes() == expected_token_id.as_slice()
+                    token_id.as_bytes() == &expected_token_id[..]
                 } else {
-                    true // No constraint on token_id
+                    true
                 }
-            },
-            _ => true, // For other operations, no fixed parameters to check
+            }
+            _ => true,
         };
 
         if !matches_fixed_params {
             return Ok(false);
         }
 
-                // Verify operation only modifies allowed variable parameters
-                let variable_params_valid = match operation {
-                    Operation::Transfer { amount, .. } => {
-                        // For transfers, check if amount is allowed to vary
-                        pre_commit.variable_parameters.contains("amount") || 
-                        // Or check if fixed amount matches
-                        if let Some(expected_amount_bytes) = pre_commit.fixed_parameters.get("amount") {
-                            if expected_amount_bytes.len() == 8 {
-                                let mut expected_amount_arr = [0u8; 8];
-                                expected_amount_arr.copy_from_slice(&expected_amount_bytes[0..8]);
-                                let expected_amount = u64::from_le_bytes(expected_amount_arr);
-                                amount.value() == expected_amount
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    },
-                    Operation::Mint { amount, .. } => {
-                        // For mints, check if amount is allowed to vary
-                        pre_commit.variable_parameters.contains("amount") || 
-                        // Or check if fixed amount matches
-                        if let Some(expected_amount_bytes) = pre_commit.fixed_parameters.get("amount") {
-                            if expected_amount_bytes.len() == 8 {
-                                let mut expected_amount_arr = [0u8; 8];
-                                expected_amount_arr.copy_from_slice(&expected_amount_bytes[0..8]);
-                                let expected_amount = u64::from_le_bytes(expected_amount_arr);
-                                amount.value() == expected_amount
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    },
-                    Operation::Burn { amount, .. } => {
-                        // For burns, check if amount is allowed to vary
-                        pre_commit.variable_parameters.contains("amount") || 
-                        // Or check if fixed amount matches
-                        if let Some(expected_amount_bytes) = pre_commit.fixed_parameters.get("amount") {
-                            if expected_amount_bytes.len() == 8 {
-                                let mut expected_amount_arr = [0u8; 8];
-                                expected_amount_arr.copy_from_slice(&expected_amount_bytes[0..8]);
-                                let expected_amount = u64::from_le_bytes(expected_amount_arr);
-                                amount.value() == expected_amount
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    },
-                    _ => true, // For other operations, no variable parameters to check
-                };
+        // Verify operation only modifies allowed variable parameters
+        let variable_params_valid = match operation {
+            Operation::Transfer { amount, .. }
+            | Operation::Mint { amount, .. }
+            | Operation::Burn { amount, .. } => {
+                // Check if "amount" is in variable_parameters or if it's fixed and matches
+                if pre_commit.variable_parameters.contains("amount") {
+                    true
+                } else if let Some(expected_amount_bytes) =
+                    pre_commit.fixed_parameters.get("amount")
+                {
+                    if expected_amount_bytes.len() == 8 {
+                        let mut arr = [0u8; 8];
+                        arr.copy_from_slice(&expected_amount_bytes[0..8]);
+                        let expected_amount = u64::from_le_bytes(arr);
+                        amount.value() == expected_amount
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => true,
+        };
 
         Ok(matches_type && matches_fixed_params && variable_params_valid)
     }
-    
+
     /// Verify mint authorization proof
+    #[allow(unused_variables)]
     fn verify_mint_authorization(
         &self,
-        _authorized_by: &str,
-        _proof: &[u8],
+        authorized_by: &str,
+        proof: &[u8],
     ) -> Result<bool, DsmError> {
         // Implementation would verify cryptographic proof
+        // using authorized_by (str) and proof (&[u8])
         Ok(true) // Placeholder
     }
 
-    /// Verify token ownership proof
-    fn verify_token_ownership(&self, _token_id: &str, _proof: &[u8]) -> Result<bool, DsmError> {
+    /// Verify token ownership proof 
+    #[allow(unused_variables)]
+    fn verify_token_ownership(&self, token_id: &str, proof: &[u8]) -> Result<bool, DsmError> {
         // Implementation would verify cryptographic proof
+        // using token_id (str) and proof (&[u8])
         Ok(true) // Placeholder
     }
-    
+
     /// Verify that the operation complies with the token's CTPA policy
     fn verify_token_policy(&self, operation: &Operation) -> Result<(), DsmError> {
         // Skip verification if policy store is not configured
         let policy_store = match &self.policy_store {
             Some(store) => store,
-            None => return Ok(()), // No policy store, skip verification
+            None => return Ok(()),
         };
-        
+
         // Get token ID based on operation type
         let token_id = match operation {
             Operation::Transfer { token_id, .. } => token_id,
@@ -437,35 +473,39 @@ impl TokenStateManager {
             Operation::Burn { token_id, .. } => token_id,
             Operation::LockToken { token_id, .. } => token_id,
             Operation::UnlockToken { token_id, .. } => token_id,
-            _ => return Ok(()), // Not a token operation, skip verification
+            _ => return Ok(()),
         };
-        
+
         // Get token to check if it has a policy anchor
         let token = match self.get_token(token_id) {
             Ok(token) => token,
             Err(_) => return Ok(()), // Token not found, skip verification
         };
-        
+
         // Skip verification if token has no policy anchor
         let policy_anchor_bytes = match token.policy_anchor() {
             Some(anchor) => anchor,
-            None => return Ok(()), // No policy anchor, skip verification
+            None => return Ok(()),
         };
-        
+
         // Create PolicyAnchor from bytes
-        let policy_anchor = PolicyAnchor(*policy_anchor_bytes);
-        
+        let policy_anchor = PolicyAnchor(policy_anchor_bytes.clone());
+
         // Get runtime for async operations
         let runtime = match &self.runtime {
             Some(rt) => rt,
-            None => return Err(DsmError::internal(
-                "No runtime available for policy verification",
-                None::<std::io::Error>
-            )),
+            None => {
+                return Err(DsmError::internal(
+                    "No runtime available for policy verification",
+                    None::<std::io::Error>,
+                ))
+            }
         };
-        
-        // Retrieve and verify policy
-        let policy = match runtime.block_on(policy_store.get_policy(&policy_anchor)) {
+
+        // Retrieve policy
+        let token_policy = match runtime.block_on(async {
+            policy_store.get_policy(&policy_anchor).await
+        }) {
             Ok(policy) => policy,
             Err(e) => {
                 return Err(DsmError::validation(
@@ -474,16 +514,21 @@ impl TokenStateManager {
                 ));
             }
         };
-        
-        // Verify the policy against the operation
-        let result = verify_policy(&policy, operation, None, None, None);
-        
+
+        // Convert PolicyFile to Policy for verification
+        let policy = Policy {
+            name: token_policy.file.name.clone(),
+            conditions: token_policy.file.conditions.clone(),
+        };
+
+        // Check basic policy compliance
+        let result: PolicyVerificationResult = verify_policy(&policy, operation, None, None, None);
         match result {
             PolicyVerificationResult::Valid => Ok(()),
-            PolicyVerificationResult::Invalid { message, condition: _ } => {
+            PolicyVerificationResult::Invalid { message } => {
                 Err(DsmError::policy_violation(
                     token_id.clone(),
-                    format!("Policy violation: {}", message),
+                    message,
                     None::<std::io::Error>,
                 ))
             },
@@ -495,55 +540,55 @@ impl TokenStateManager {
             }
         }
     }
+
+    /// A helper to create a consistent key for our `HashMap<String, Balance>`.
+    /// We use the hex-encoded public key (owner) plus the token_id.
+    pub fn make_balance_key(owner_pk: &[u8], token_id: &str) -> String {
+        format!("{}{}", hex::encode(owner_pk), token_id)
+    }
+
+
     // ------------------------------------------------------------------------
     //                           Token Store Methods
     // ------------------------------------------------------------------------
 
     /// Check if a token with the given `token_id` exists
     pub fn token_exists(&self, token_id: &str) -> Result<bool, DsmError> {
-        let store = self.token_store.read().map_err(|_| DsmError::LockError)?;
+        let store = self.token_store.read();
         Ok(store.contains_key(token_id))
     }
 
     /// Retrieve a `Token` by ID
     pub fn get_token(&self, token_id: &str) -> Result<Token, DsmError> {
-        let store = self.token_store.read().map_err(|_| DsmError::LockError)?;
+        let store = self.token_store.read();
         store
             .get(token_id)
             .cloned()
             .ok_or_else(|| DsmError::not_found("Token", Some(token_id.to_string())))
     }
 
-    /// Returns a token's balance for the given `owner_id`, if the store is used that way,
-    /// falling back to zero if not found.  (This is separate from the `State::token_balances` map.)
-    pub fn get_token_balance_from_store(&self, token_id: &str, owner_id: &str) -> Balance {
-        let key = format!("{}:{}", owner_id, token_id);
+    /// Returns a token's balance for the given (public_key, token_id),
+    /// falling back to zero if not found. (Separate from the `State::token_balances` map.)
+    pub fn get_token_balance_from_store(&self, owner_pk: &[u8], token_id: &str) -> Balance {
+        let key = Self::make_balance_key(owner_pk, token_id);
 
         // First try the cache
-        if let Ok(cache) = self.balance_cache.read() {
-            if let Some(bal) = cache.get(&key) {
-                return bal.clone();
-            }
+        let cache = self.balance_cache.read();
+        if let Some(bal) = cache.get(&key) {
+            return bal.clone();
         }
 
-        // Then check the store
-        if let Ok(store) = self.token_store.read() {
-            if let Some(token) = store.get(token_id) {
-                // If it's truly single-owner, we compare token.owner_id() to `owner_id`
-                if token.owner_id() == owner_id {
-                    return token.balance().clone();
-                }
-            }
-        }
+        // Then check the token_store for single-owner usage or some fallback logic
+        // if you have a separate record of "store-level" balances (but typically it's in the state).
+        // If you don't store per-owner token data in token_store, you might skip this part.
 
-        // Default is zero
-        crate::types::token_types::Balance::new(0)
+        // If not found, default to zero
+        Balance::new(0)
     }
 
     /// Update an existing token's metadata while preserving other properties.
     pub fn update_token_metadata(&self, token_id: &str, metadata: Vec<u8>) -> Result<(), DsmError> {
-        let mut store = self.token_store.write().map_err(|_| DsmError::LockError)?;
-
+        let mut store = self.token_store.write();
         if let Some(old_token) = store.get_mut(token_id) {
             let mut new_token = Token::new(
                 token_id,
@@ -565,7 +610,7 @@ impl TokenStateManager {
 
     /// Revoke a token, marking it with `TokenStatus::Revoked`
     pub fn revoke_token(&self, token_id: &str) -> Result<(), DsmError> {
-        let mut store = self.token_store.write().map_err(|_| DsmError::LockError)?;
+        let mut store = self.token_store.write();
         if let Some(token) = store.get_mut(token_id) {
             token.set_status(TokenStatus::Revoked);
             Ok(())
@@ -576,7 +621,7 @@ impl TokenStateManager {
 
     /// Verify that a token exists and is still valid (i.e., not revoked).
     pub fn verify_token(&self, token_id: &str) -> Result<bool, DsmError> {
-        let store = self.token_store.read().map_err(|_| DsmError::LockError)?;
+        let store = self.token_store.read();
         if let Some(token) = store.get(token_id) {
             Ok(token.is_valid())
         } else {
@@ -587,13 +632,13 @@ impl TokenStateManager {
 
     /// List all token IDs in the store
     pub fn list_tokens(&self) -> Result<Vec<String>, DsmError> {
-        let store = self.token_store.read().map_err(|_| DsmError::LockError)?;
+        let store = self.token_store.read();
         Ok(store.keys().cloned().collect())
     }
 
     /// Return all tokens owned by a specific `owner_id`
     pub fn get_tokens_by_owner(&self, owner_id: &str) -> Result<Vec<Token>, DsmError> {
-        let store = self.token_store.read().map_err(|_| DsmError::LockError)?;
+        let store = self.token_store.read();
         let tokens: Vec<Token> = store
             .values()
             .filter(|tok| tok.owner_id() == owner_id)
@@ -602,7 +647,8 @@ impl TokenStateManager {
         Ok(tokens)
     }
 
-    /// Create a token transfer
+    /// Create a token transfer object (for logging or returning to the caller),
+    /// referencing the public keys of the states involved.
     pub fn create_token_transfer(
         sender_state: &State,
         recipient_state: &State,
@@ -617,12 +663,27 @@ impl TokenStateManager {
             recipient: recipient_key,
             amount,
             token_id: token_id.to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            token_store: None,
+            balance_cache: None,
         };
 
         Ok(transfer)
+    }
+
+    /// Create a token transfer object with attached stores (for reference)
+    pub fn create_token_transfer_with_stores(
+        sender_state: &State,
+        recipient_state: &State,
+        amount: u64,
+        token_id: &str,
+        token_store: Arc<RwLock<HashMap<String, Token>>>,
+        balance_cache: Arc<RwLock<HashMap<String, Balance>>>,
+    ) -> Result<TokenTransfer, DsmError> {
+        let transfer = Self::create_token_transfer(sender_state, recipient_state, amount, token_id)?;
+        Ok(transfer.with_stores(token_store, balance_cache))
     }
 }

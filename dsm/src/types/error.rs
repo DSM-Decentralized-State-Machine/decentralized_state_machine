@@ -235,9 +235,9 @@ pub enum DsmError {
         /// Token ID that has insufficient balance
         token_id: String,
         /// Current available balance
-        available: i64,
+        available: u64,
         /// Attempted transaction amount
-        requested: i64,
+        requested: u64,
     },
 
     /// Feature not available error
@@ -589,7 +589,7 @@ impl DsmError {
     /// * `token_id` - ID of the token with insufficient balance
     /// * `available` - Currently available balance
     /// * `requested` - Requested transaction amount
-    pub fn insufficient_balance(token_id: String, available: i64, requested: i64) -> Self {
+    pub fn insufficient_balance(token_id: String, available: u64, requested: u64) -> Self {
         DsmError::InsufficientBalance {
             token_id,
             available,

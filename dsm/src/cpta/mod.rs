@@ -6,7 +6,8 @@
 
 pub mod default_policy;
 pub mod policy_store;
-pub mod policy_types;
 pub mod policy_verification;
 
-
+pub use default_policy::DefaultPolicy;
+pub use policy_store::PolicyStore;
+pub use policy_verification::PolicyVerificationResult;

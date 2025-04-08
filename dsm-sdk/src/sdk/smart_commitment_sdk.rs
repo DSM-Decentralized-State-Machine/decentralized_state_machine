@@ -306,7 +306,7 @@ impl SmartCommitmentSDK {
     pub fn execute_commitment(&self, commitment: &SmartCommitment) -> Result<Operation, DsmError> {
         Ok(Operation::Transfer {
             token_id: commitment.token_id.clone(),
-            amount: Balance::new(commitment.amount as i64),
+            amount: Balance::new(commitment.amount),
             recipient: commitment.recipient.clone(),
             to: commitment.recipient.clone(),
             message: "Smart commitment transfer".to_string(),
@@ -487,12 +487,7 @@ impl SmartCommitmentSDK {
     fn execute_smart_commitment(&self, commitment: &SmartCommitment) -> Result<State, DsmError> {
         let operation = Operation::Transfer {
             to_address: commitment.recipient.clone(),
-            amount: Balance::new(
-                commitment
-                    .amount
-                    .try_into()
-                    .unwrap_or_else(|_| panic!("Overflow converting u64 to i64")),
-            ),
+            amount: Balance::new(commitment.amount),
             recipient: commitment.recipient.clone(),
             token_id: commitment.token_id.clone(),
             to: commitment.recipient.clone(),

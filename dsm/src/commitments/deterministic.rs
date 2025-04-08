@@ -1,6 +1,7 @@
-use crate::types::operations::Operation;
 use bincode;
 use blake3;
+
+use crate::types::operations::Operation;
 
 /// Create a deterministic commitment for a token operation
 pub fn create_deterministic_commitment(
@@ -92,10 +93,10 @@ pub fn verify_deterministic_commitment(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::operations::PreCommitmentOp;
-    use crate::types::token_types::Balance;
     use serde::{Deserialize, Serialize};
+
+    use super::*;
+    use crate::types::{operations::PreCommitmentOp, token_types::Balance};
 
     #[derive(Default, Clone, Serialize, Deserialize)]
     struct TestPreCommitment {}

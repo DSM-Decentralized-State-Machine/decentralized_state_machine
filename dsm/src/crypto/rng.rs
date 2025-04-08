@@ -166,6 +166,7 @@ mod tests {
         assert_eq!(random2.len(), 32);
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_generate_deterministic_random() {
         let seed1 = b"test seed 1";
@@ -177,8 +178,8 @@ mod tests {
         assert_eq!(det1a, det1b);
 
         // Different seeds should produce different outputs
-        let det2 = generate_deterministic_random(seed2, 32);
-        assert_ne!(det1a, det2);
+        let det2a = generate_deterministic_random(seed2, 32);
+        assert_ne!(det1a, det2a);
     }
 
     #[test]

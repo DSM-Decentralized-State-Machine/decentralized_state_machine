@@ -5,15 +5,20 @@
 //! The CTPA system ensures that every token in DSM is bound to an immutable policy
 //! that defines its constraints and behaviors.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use crate::crypto::blake3;
-use crate::types::error::DsmError;
-use crate::types::operations::Operation;
-use crate::types::operations::VerificationType;
-use crate::vault::VaultCondition;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    crypto::blake3,
+    types::{
+        error::DsmError,
+        operations::{Operation, VerificationType},
+    },
+};
 
 /// Token Policy Anchor
 ///
@@ -30,29 +35,29 @@ impl PolicyAnchor {
         let serialized = serde_json::to_vec(policy).map_err(|e| {
             DsmError::serialization(format!("Failed to serialize policy file: {}", e), Some(e))
         })?;
-        
+
         let hash = blake3::hash(&serialized);
         Ok(PolicyAnchor(*hash.as_bytes()))
     }
-    
+
     /// Convert to a hex string for identification
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
-    
+
     /// Create from a hex string
     pub fn from_hex(hex_str: &str) -> Result<Self, DsmError> {
         let bytes = hex::decode(hex_str).map_err(|e| {
             DsmError::validation(format!("Invalid policy anchor hex: {}", e), Some(e))
         })?;
-        
+
         if bytes.len() != 32 {
             return Err(DsmError::validation(
                 format!("Invalid policy anchor length: {}", bytes.len()),
                 None::<std::convert::Infallible>,
             ));
         }
-        
+
         let mut anchor = [0u8; 32];
         anchor.copy_from_slice(&bytes);
         Ok(PolicyAnchor(anchor))
@@ -68,6 +73,21 @@ pub enum AllowedOperation {
     Specific(Box<Operation>),
 }
 
+/// Vault condition types for policy enforcement
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum VaultCondition {
+    /// Time-based unlock condition
+    Time(u64),
+    /// Hash-based unlock condition
+    Hash(String),
+    /// Minimum balance requirement
+    MinimumBalance(u64),
+    /// Specific vault type requirement
+    VaultType(String),
+    /// Custom vault conditions
+    Custom(HashMap<String, String>),
+}
+
 /// Policy condition types that can constrain token behavior
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PolicyCondition {
@@ -76,39 +96,39 @@ pub enum PolicyCondition {
         /// The timestamp after which the token can be transferred
         unlock_time: u64,
     },
-    
+
     /// Identity-based restrictions
     IdentityConstraint {
         /// List of identity IDs allowed to interact with the token
         allowed_identities: Vec<String>,
-        
+
         /// Whether to allow derived identities
         allow_derived: bool,
     },
-    
+
     /// Vault-enforced conditions
     VaultEnforcement {
         /// The vault condition that must be satisfied
         condition: VaultCondition,
     },
-    
+
     /// Operational restrictions
     OperationRestriction {
         /// Allowed operation types
         allowed_operations: Vec<Operation>,
     },
-    
+
     /// Geographic restrictions using region codes
     GeographicRestriction {
         /// List of allowed region codes
         allowed_regions: Vec<String>,
     },
-    
+
     /// Custom implementation-specific constraints
     Custom {
         /// Type identifier for the custom constraint
         constraint_type: String,
-        
+
         /// Parameters for the constraint
         parameters: HashMap<String, String>,
     },
@@ -119,10 +139,10 @@ pub enum PolicyCondition {
 pub struct PolicyRole {
     /// Role identifier
     pub id: String,
-    
+
     /// Role name
     pub name: String,
-    
+
     /// Allowed operations for this role
     pub permissions: Vec<Operation>,
 }
@@ -135,25 +155,25 @@ pub struct PolicyRole {
 pub struct PolicyFile {
     /// Policy name for human readability
     pub name: String,
-    
+
     /// Policy version
     pub version: String,
-    
+
     /// Creation timestamp
     pub created_at: u64,
-    
+
     /// Policy author's identity
     pub author: String,
-    
+
     /// Policy description
     pub description: Option<String>,
-    
+
     /// Token policy conditions
     pub conditions: Vec<PolicyCondition>,
-    
+
     /// Role-based access control
     pub roles: Vec<PolicyRole>,
-    
+
     /// Additional metadata
     pub metadata: HashMap<String, String>,
 }
@@ -175,31 +195,31 @@ impl PolicyFile {
             metadata: HashMap::new(),
         }
     }
-    
+
     /// Add a condition to the policy
     pub fn add_condition(&mut self, condition: PolicyCondition) -> &mut Self {
         self.conditions.push(condition);
         self
     }
-    
+
     /// Add a role to the policy
     pub fn add_role(&mut self, role: PolicyRole) -> &mut Self {
         self.roles.push(role);
         self
     }
-    
+
     /// Add metadata to the policy
     pub fn add_metadata(&mut self, key: &str, value: &str) -> &mut Self {
         self.metadata.insert(key.to_string(), value.to_string());
         self
     }
-    
+
     /// Add a description to the policy
     pub fn with_description(&mut self, description: &str) -> &mut Self {
         self.description = Some(description.to_string());
         self
     }
-    
+
     /// Generate a policy anchor (CTPA) for this policy file
     pub fn generate_anchor(&self) -> Result<PolicyAnchor, DsmError> {
         PolicyAnchor::from_policy(self)
@@ -214,13 +234,13 @@ impl PolicyFile {
 pub struct TokenPolicy {
     /// The policy file content
     pub file: PolicyFile,
-    
+
     /// The content-addressed policy anchor (CTPA)
     pub anchor: PolicyAnchor,
-    
+
     /// Whether the policy has been verified
     pub verified: bool,
-    
+
     /// Last verification time
     pub last_verified: u64,
 }
@@ -233,7 +253,7 @@ impl TokenPolicy {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
+
         Ok(Self {
             file,
             anchor,
@@ -241,7 +261,7 @@ impl TokenPolicy {
             last_verified: now,
         })
     }
-    
+
     /// Mark the policy as verified
     pub fn mark_verified(&mut self) {
         self.verified = true;
@@ -250,7 +270,7 @@ impl TokenPolicy {
             .unwrap_or_default()
             .as_secs();
     }
-    
+
     /// Check if a condition is satisfied
     pub fn is_condition_satisfied(&self, condition: &PolicyCondition) -> bool {
         match condition {
@@ -267,21 +287,79 @@ impl TokenPolicy {
             _ => true,
         }
     }
-    
+
     /// Check if all time-based conditions are satisfied
     pub fn are_time_conditions_satisfied(&self) -> bool {
-        self.file.conditions.iter().all(|condition| {
-            match condition {
+        self.file
+            .conditions
+            .iter()
+            .all(|condition| match condition {
                 PolicyCondition::TimeLock { .. } => self.is_condition_satisfied(condition),
                 _ => true,
-            }
-        })
+            })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyVerification {
+    /// Type of verification to be performed
     pub verification_type: VerificationType,
+    
+    /// Additional parameters required for the verification process
     pub parameters: HashMap<String, Vec<u8>>,
-    // ...existing code...
+    
+    /// Timestamp when the verification was conducted
+    pub timestamp: u64,
+    
+    /// Verification result (success or failure)
+    pub result: bool,
+    
+    /// Optional message providing details about the verification result
+    pub message: Option<String>,
+    
+    /// Cryptographic proof of verification (when applicable)
+    pub proof: Option<Vec<u8>>,
+}
+
+impl PolicyVerification {
+    /// Create a new policy verification record
+    pub fn new(verification_type: VerificationType) -> Self {
+        Self {
+            verification_type,
+            parameters: HashMap::new(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            result: false,
+            message: None,
+            proof: None,
+        }
+    }
+    
+    /// Record a successful verification
+    pub fn success(mut self, message: Option<String>, proof: Option<Vec<u8>>) -> Self {
+        self.result = true;
+        self.message = message;
+        self.proof = proof;
+        self
+    }
+    
+    /// Record a failed verification
+    pub fn failure(mut self, message: String) -> Self {
+        self.result = false;
+        self.message = Some(message);
+        self
+    }
+    
+    /// Add a parameter to the verification record
+    pub fn with_parameter(mut self, key: &str, value: Vec<u8>) -> Self {
+        self.parameters.insert(key.to_string(), value);
+        self
+    }
+}
+
+pub struct Policy {
+    pub name: String,
+    pub conditions: Vec<PolicyCondition>,
 }

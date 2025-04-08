@@ -5,17 +5,19 @@
 // It integrates with the core DSM architecture to provide real-time verification
 // and metrics for protocol operations.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use blake3::Hasher;
 use chrono::Utc;
-use dsm::core::state_machine::StateMachine;
-use dsm::crypto::signatures::SignatureKeyPair;
-use dsm::types::error::DsmError;
-use dsm::types::operations::Operation;
-use dsm::types::state_types::State;
+use dsm::{
+    core::state_machine::StateMachine,
+    crypto::signatures::SignatureKeyPair,
+    types::{error::DsmError, operations::Operation, state_types::State},
+};
 
 /// Timekeeper for protocol operation metrics
 #[derive(Debug, Clone)]
@@ -92,7 +94,8 @@ impl ProtocolVerification {
 
     /// Add a component verification result
     pub fn add_component_result(&mut self, component: &str, verified: bool) {
-        self.component_results.insert(component.to_string(), verified);
+        self.component_results
+            .insert(component.to_string(), verified);
         // Update overall verification status
         self.update_verification_status();
     }
@@ -105,7 +108,8 @@ impl ProtocolVerification {
     /// Update the overall verification status based on component results
     fn update_verification_status(&mut self) {
         // Overall verification status is true only if all components verified successfully
-        self.verified = !self.component_results.is_empty() && self.component_results.values().all(|&v| v);
+        self.verified =
+            !self.component_results.is_empty() && self.component_results.values().all(|&v| v);
     }
 
     /// Get a formatted representation of the verification result
@@ -126,9 +130,9 @@ impl ProtocolVerification {
         output.push_str("\n\x1b[1;37m╔══════════════════════════════════════════════════════════════════════════╗\x1b[0m\n");
         output.push_str("\x1b[1;37m║                    TRADE PROTOCOL METRICS                                ║\x1b[0m\n");
         output.push_str("\x1b[1;37m╠══════════════════════════════════════════════════════════════════════════╣\x1b[0m\n");
-        output.push_str(&"\x1b[1;37m║\x1b[0m \x1b[1;32mProtocol Version\x1b[0m: DSM Secure Trading Protocol v1.0                       \x1b[1;37m║\x1b[0m\n".to_string());
-        output.push_str(&"\x1b[1;37m║\x1b[0m \x1b[1;32mSecurity Level\x1b[0m  : Cryptographic Identity Verification                    \x1b[1;37m║\x1b[0m\n".to_string());
-        output.push_str(&"\x1b[1;37m║\x1b[0m \x1b[1;32mTransport Layer\x1b[0m : Secure Bluetooth with End-to-End Encryption            \x1b[1;37m║\x1b[0m\n".to_string());
+        output.push_str("\x1b[1;37m║\x1b[0m \x1b[1;32mProtocol Version\x1b[0m: DSM Secure Trading Protocol v1.0                       \x1b[1;37m║\x1b[0m\n");
+        output.push_str("\x1b[1;37m║\x1b[0m \x1b[1;32mSecurity Level\x1b[0m  : Cryptographic Identity Verification                    \x1b[1;37m║\x1b[0m\n");
+        output.push_str("\x1b[1;37m║\x1b[0m \x1b[1;32mTransport Layer\x1b[0m : Secure Bluetooth with End-to-End Encryption            \x1b[1;37m║\x1b[0m\n");
 
         // Format execution time to 1 decimal place
         let exec_time = if let Some(time) = self.metrics.execution_time {
@@ -136,9 +140,15 @@ impl ProtocolVerification {
         } else {
             "Not measured".to_string()
         };
-        output.push_str(&format!("\x1b[1;37m║\x1b[0m \x1b[1;32mExecution Time\x1b[0m  : {:<50} \x1b[1;37m║\x1b[0m\n", exec_time));
-        
-        output.push_str(&format!("\x1b[1;37m║\x1b[0m \x1b[1;32mMemory Safety\x1b[0m   : {:<50} \x1b[1;37m║\x1b[0m\n", memory_safety_str));
+        output.push_str(&format!(
+            "\x1b[1;37m║\x1b[0m \x1b[1;32mExecution Time\x1b[0m  : {:<50} \x1b[1;37m║\x1b[0m\n",
+            exec_time
+        ));
+
+        output.push_str(&format!(
+            "\x1b[1;37m║\x1b[0m \x1b[1;32mMemory Safety\x1b[0m   : {:<50} \x1b[1;37m║\x1b[0m\n",
+            memory_safety_str
+        ));
 
         let trade_status = match self.metrics.trade_status.as_str() {
             "SUCCESS" => "\x1b[1;32mSUCCESS - Atomically Committed\x1b[0m".to_string(),
@@ -146,11 +156,14 @@ impl ProtocolVerification {
             "FAILED" => "\x1b[1;31mFAILED - Verification Error\x1b[0m".to_string(),
             status => status.to_string(),
         };
-        output.push_str(&format!("\x1b[1;37m║\x1b[0m \x1b[1;32mTrade Status\x1b[0m    : {:<50} \x1b[1;37m║\x1b[0m\n", trade_status));
+        output.push_str(&format!(
+            "\x1b[1;37m║\x1b[0m \x1b[1;32mTrade Status\x1b[0m    : {:<50} \x1b[1;37m║\x1b[0m\n",
+            trade_status
+        ));
         output.push_str("\x1b[1;37m╚══════════════════════════════════════════════════════════════════════════╝\x1b[0m\n");
 
         // Add component details if verification failed
-        if (!self.verified) {
+        if !self.verified {
             output.push_str("\nComponent Verification Results:\n");
             for (component, verified) in &self.component_results {
                 let result = if *verified { "✓ PASS" } else { "✗ FAIL" };
@@ -255,7 +268,7 @@ impl ProtocolMetrics {
     /// Update the overall verification status based on component verifications
     pub fn update_verification_status(&mut self) {
         self.verification_status = self.state_hash_verified && self.hash_chain_verified;
-        
+
         // Update trade status based on verification
         if self.verification_status {
             self.trade_status = "SUCCESS".to_string();
@@ -307,7 +320,7 @@ impl ProtocolMetricsManager {
         let mut timers = self.timers.lock().unwrap();
         if let Some(timer) = timers.get_mut(operation) {
             let elapsed = timer.stop();
-            
+
             // If this is the main protocol timer, update metrics
             if operation == "protocol_execution" {
                 if let Some(duration) = elapsed {
@@ -315,7 +328,7 @@ impl ProtocolMetricsManager {
                     metrics.set_execution_time(duration);
                 }
             }
-            
+
             elapsed
         } else {
             None
@@ -323,30 +336,39 @@ impl ProtocolMetricsManager {
     }
 
     /// Verify a state transition
-    pub fn verify_state_transition(&self, prev_state: &State, next_state: &State, operation: &Operation) -> Result<bool, DsmError> {
+    pub fn verify_state_transition(
+        &self,
+        prev_state: &State,
+        next_state: &State,
+        operation: &Operation,
+    ) -> Result<bool, DsmError> {
         // Start timer for verification
         self.start_timer("state_verification");
-        
+
         // Verify state transition
-        let result = self.state_machine.apply_operation(prev_state.clone(), operation.clone(), next_state.entropy.clone());
-        
+        let result = self.state_machine.apply_operation(
+            prev_state.clone(),
+            operation.clone(),
+            next_state.entropy.clone(),
+        );
+
         // Update metrics
         {
             let mut metrics = self.current_metrics.lock().unwrap();
             metrics.increment_state_transitions();
         }
-        
+
         // Record verification result
         let verified = if let Ok(computed_next_state) = result {
             // Compare computed next state with provided next state
             let state_hash_verified = computed_next_state.hash()? == next_state.hash()?;
-            
+
             // Update metrics
             {
                 let mut metrics = self.current_metrics.lock().unwrap();
                 metrics.set_state_hash_verified(state_hash_verified);
             }
-            
+
             // Add to verification results
             {
                 let mut verification = self.verification.lock().unwrap();
@@ -355,40 +377,48 @@ impl ProtocolMetricsManager {
                     verification.add_error("state_transition", "State hashes do not match");
                 }
             }
-            
+
             state_hash_verified
         } else {
             // Update verification on error
             {
                 let mut verification = self.verification.lock().unwrap();
                 verification.add_component_result("state_transition", false);
-                verification.add_error("state_transition", &format!("Error applying operation: {:?}", result.err()));
+                verification.add_error(
+                    "state_transition",
+                    &format!("Error applying operation: {:?}", result.err()),
+                );
             }
-            
+
             false
         };
-        
+
         // Stop timer
         self.stop_timer("state_verification");
-        
+
         Ok(verified)
     }
 
     /// Verify a signature
-    pub fn verify_signature(&self, data: &[u8], signature: &Vec<u8>, public_key: &[u8]) -> Result<bool, DsmError> {
+    pub fn verify_signature(
+        &self,
+        data: &[u8],
+        signature: &Vec<u8>,
+        public_key: &[u8],
+    ) -> Result<bool, DsmError> {
         // Start timer for verification
         self.start_timer("signature_verification");
-        
+
         // Verify signature
         let result = SignatureKeyPair::verify_raw(data, signature, public_key);
-        
+
         // Update metrics
         {
             let mut metrics = self.current_metrics.lock().unwrap();
             metrics.increment_crypto_operations();
             metrics.increment_signature_verifications();
         }
-        
+
         // Record verification result
         let verified = match result {
             Ok(verified) => {
@@ -400,24 +430,25 @@ impl ProtocolMetricsManager {
                         verification.add_error("signature", "Signature verification failed");
                     }
                 }
-                
+
                 verified
-            },
+            }
             Err(e) => {
                 // Add to verification results
                 {
                     let mut verification = self.verification.lock().unwrap();
                     verification.add_component_result("signature", false);
-                    verification.add_error("signature", &format!("Error verifying signature: {:?}", e));
+                    verification
+                        .add_error("signature", &format!("Error verifying signature: {:?}", e));
                 }
-                
+
                 false
             }
         };
-        
+
         // Stop timer
         self.stop_timer("signature_verification");
-        
+
         Ok(verified)
     }
 
@@ -425,16 +456,16 @@ impl ProtocolMetricsManager {
     pub fn verify_hash_chain(&self, states: &[State]) -> Result<bool, DsmError> {
         // Start timer for verification
         self.start_timer("hash_chain_verification");
-        
+
         // Verify hash chain continuity
         let mut verified = true;
         let mut error_message = String::new();
-        
+
         // Check that state chain is continuous
         for i in 1..states.len() {
             let prev_state = &states[i - 1];
             let curr_state = &states[i];
-            
+
             // Verify state number continuity
             if curr_state.state_number != prev_state.state_number + 1 {
                 verified = false;
@@ -444,7 +475,7 @@ impl ProtocolMetricsManager {
                 );
                 break;
             }
-            
+
             // Verify hash chain continuity
             let prev_hash = prev_state.hash()?;
             if curr_state.prev_state_hash != prev_hash {
@@ -456,13 +487,13 @@ impl ProtocolMetricsManager {
                 break;
             }
         }
-        
+
         // Update metrics
         {
             let mut metrics = self.current_metrics.lock().unwrap();
             metrics.set_hash_chain_verified(verified);
         }
-        
+
         // Record verification result
         {
             let mut verification = self.verification.lock().unwrap();
@@ -471,10 +502,10 @@ impl ProtocolMetricsManager {
                 verification.add_error("hash_chain", &error_message);
             }
         }
-        
+
         // Stop timer
         self.stop_timer("hash_chain_verification");
-        
+
         Ok(verified)
     }
 
@@ -482,21 +513,21 @@ impl ProtocolMetricsManager {
     pub fn calculate_hash(&self, data: &[u8]) -> Vec<u8> {
         // Start timer for hashing
         self.start_timer("hash_calculation");
-        
+
         // Calculate hash
         let mut hasher = Hasher::new();
         hasher.update(data);
         let hash = hasher.finalize().as_bytes().to_vec();
-        
+
         // Update metrics
         {
             let mut metrics = self.current_metrics.lock().unwrap();
             metrics.increment_crypto_operations();
         }
-        
+
         // Stop timer
         self.stop_timer("hash_calculation");
-        
+
         hash
     }
 
@@ -507,17 +538,17 @@ impl ProtocolMetricsManager {
             let mut metrics = self.current_metrics.lock().unwrap();
             metrics.update_verification_status();
         }
-        
+
         // Update overall verification
         let verification_result = {
             let verification = self.verification.lock().unwrap();
             let metrics = self.current_metrics.lock().unwrap();
-            
+
             let mut updated_verification = verification.clone();
             updated_verification.metrics = metrics.clone();
             updated_verification
         };
-        
+
         // Return formatted output
         verification_result.formatted_output()
     }
@@ -528,12 +559,12 @@ impl ProtocolMetricsManager {
             let mut timers = self.timers.lock().unwrap();
             timers.clear();
         }
-        
+
         {
             let mut metrics = self.current_metrics.lock().unwrap();
             *metrics = ProtocolMetrics::new();
         }
-        
+
         {
             let mut verification = self.verification.lock().unwrap();
             *verification = ProtocolVerification::new();
@@ -561,12 +592,12 @@ pub fn create_metrics_manager(state_machine: Arc<StateMachine>) -> Arc<ProtocolM
 /// Calculate integrity hash for a set of data
 pub fn calculate_integrity_hash(data_items: &[&[u8]]) -> Vec<u8> {
     let mut hasher = Hasher::new();
-    
+
     // Add all data items to hasher in sequence
     for data in data_items {
         hasher.update(data);
     }
-    
+
     hasher.finalize().as_bytes().to_vec()
 }
 
@@ -579,102 +610,98 @@ pub fn verify_memory_safety() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use dsm::types::state_types::{DeviceInfo, StateParams};
-    
+
+    use super::*;
+
     // Helper function to create a test state
-#[allow(dead_code)]
-fn create_test_state(state_number: u64, prev_hash: Vec<u8>, entropy: Vec<u8>) -> State {
+    #[allow(dead_code)]
+    fn create_test_state(state_number: u64, prev_hash: Vec<u8>, entropy: Vec<u8>) -> State {
         let device_info = DeviceInfo::new(
             "test_device",
             vec![0, 1, 2, 3], // Test public key
         );
-        
+
         let operation = Operation::Generic {
             operation_type: "test".to_string(),
             data: vec![],
             message: "Test operation".to_string(),
         };
-        
-        let params = StateParams::new(
-            state_number,
-            entropy,
-            operation,
-            device_info,
-        );
-        
+
+        let params = StateParams::new(state_number, entropy, operation, device_info);
+
         let params = params.with_prev_state_hash(prev_hash);
-        
+
         State::new(params)
     }
-    
+
     #[test]
     fn test_protocol_timer() {
         let mut timer = ProtocolTimer::new("test_operation");
         timer.start();
-        
+
         // Simulate some work
         std::thread::sleep(Duration::from_millis(10));
-        
+
         let elapsed = timer.stop();
         assert!(elapsed.is_some());
         assert!(elapsed.unwrap() >= Duration::from_millis(10));
     }
-    
+
     #[test]
     fn test_protocol_verification() {
         let mut verification = ProtocolVerification::new();
-        
+
         // Add some component results
         verification.add_component_result("signature", true);
         verification.add_component_result("state_transition", true);
-        
+
         // Verify that overall verification is true when all components pass
         assert!(verification.verified);
-        
+
         // Add a failing component
         verification.add_component_result("hash_chain", false);
         verification.add_error("hash_chain", "Hash chain broken");
-        
+
         // Overall verification should now be false
         assert!(!verification.verified);
     }
-    
+
     #[test]
     fn test_protocol_metrics() {
         let mut metrics = ProtocolMetrics::new();
-        
+
         // Set some metrics
         metrics.set_execution_time(Duration::from_secs(1));
         metrics.increment_crypto_operations();
         metrics.increment_state_transitions();
         metrics.set_state_hash_verified(true);
         metrics.set_hash_chain_verified(true);
-        
+
         // Update verification status
         metrics.update_verification_status();
-        
+
         // Verify metrics
         assert!(metrics.verification_status);
         assert_eq!(metrics.trade_status, "SUCCESS");
         assert_eq!(metrics.crypto_operations, 1);
         assert_eq!(metrics.state_transitions, 1);
     }
-    
+
     #[test]
     fn test_calculate_integrity_hash() {
         let data1 = b"test data 1";
         let data2 = b"test data 2";
-        
+
         let hash = calculate_integrity_hash(&[data1, data2]);
-        
+
         // Verify hash is not empty
         assert!(!hash.is_empty());
-        
+
         // Verify hash is deterministic
         let hash2 = calculate_integrity_hash(&[data1, data2]);
         assert_eq!(hash, hash2);
-        
+
         // Verify hash changes with different data
         let hash3 = calculate_integrity_hash(&[data2, data1]);
         assert_ne!(hash, hash3);

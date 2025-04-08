@@ -9,7 +9,7 @@
 //! are met. Once conditions are satisfied, the vault releases its contents through
 //! a deterministic process that provides non-repudiation and verifiability.
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, time::{SystemTime, UNIX_EPOCH}};
 
 use crate::core::state_machine::random_walk::algorithms::{
     generate_positions, generate_seed, Position,
@@ -20,13 +20,16 @@ use crate::crypto::pedersen::{PedersenCommitment, PedersenParams, SecurityLevel}
 use crate::crypto::sphincs;
 use crate::types::error::DsmError;
 use crate::types::state_types::State;
-use crate::vault::shared::FulfillmentMechanism;
+use crate::types::policy_types::VaultCondition;
+
 use constant_time_eq;
 use pqcrypto_mlkem::mlkem512;
 use pqcrypto_traits::kem::{
     Ciphertext as CiphertextTrait, SecretKey as SecretKeyTrait, SharedSecret as SharedSecretTrait,
 };
 use serde::{Deserialize, Serialize};
+
+use super::FulfillmentMechanism;
 
 // Wrapper types for mlkem512
 #[derive(Clone)] // Remove Debug since underlying types don't implement it
@@ -1320,6 +1323,8 @@ mod tests {
     }
 }
 
+
+
 impl Default for LimboVault {
     fn default() -> Self {
         Self {
@@ -1346,4 +1351,170 @@ impl Default for LimboVault {
             reference_state_hash: vec![0; 32],
         }
     }
+}
+
+/// Status of a deterministic vault
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum VaultStatus {
+    /// Vault is active and in limbo state
+    Active,
+    /// Vault has been claimed
+    Claimed,
+    /// Vault has been revoked/invalidated
+    Revoked,
+    /// Vault has expired
+    Expired,
+}
+
+/// Deterministic implementation of LimboVault for policy verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeterministicLimboVault {
+    /// Unique identifier for this vault
+    id: String,
+    
+    /// ID of the creator
+    creator_id: String,
+    
+    /// ID of the recipient
+    recipient_id: String,
+    
+    /// Vault data
+    data: Vec<u8>,
+    
+    /// Condition for the vault
+    condition: VaultCondition,
+    
+    /// Current status of the vault
+    status: VaultStatus,
+}
+
+impl DeterministicLimboVault {
+    /// Create a new deterministic limbo vault
+    pub fn new(
+        creator_id: &str,
+        recipient_id: &str,
+        data: Vec<u8>,
+        condition: VaultCondition,
+    ) -> Self {
+        // Create a deterministic ID based on inputs
+        let id_components = format!("{}:{}:{}", creator_id, recipient_id, hex::encode(&data[0..8.min(data.len())]));
+        let id = format!("dlv_{}", hex::encode(blake3::hash(id_components.as_bytes()).as_bytes()));
+        
+        Self {
+            id,
+            creator_id: creator_id.to_string(),
+            recipient_id: recipient_id.to_string(),
+            data,
+            condition,
+            status: VaultStatus::Active,
+        }
+    }
+    
+    /// Get the vault ID
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    
+    /// Get the creator ID
+    pub fn creator_id(&self) -> &str {
+        &self.creator_id
+    }
+    
+    /// Get the recipient ID
+    pub fn recipient_id(&self) -> &str {
+        &self.recipient_id
+    }
+    
+    /// Get the vault data
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+    
+    /// Get the vault condition
+    pub fn condition(&self) -> &VaultCondition {
+        &self.condition
+    }
+    
+    /// Get the vault status
+    pub fn status(&self) -> &VaultStatus {
+        &self.status
+    }
+    
+    /// Set the vault status
+    pub fn set_status(&mut self, status: VaultStatus) {
+        self.status = status;
+    }
+    
+    /// Create from an existing LimboVault
+    pub fn from_limbo_vault(vault: &LimboVault, condition: VaultCondition) -> Result<Self, DsmError> {
+        let creator_id = hex::encode(&vault.creator_public_key);
+        let recipient_id = match &vault.intended_recipient {
+            Some(recipient) => hex::encode(recipient),
+            None => String::new(),
+        };
+        
+        // Convert to deterministic implementation
+        Ok(Self {
+            id: vault.id.clone(),
+            creator_id,
+            recipient_id,
+            data: vault.encrypted_content.encrypted_data.clone(),
+            condition,
+            status: match vault.state {
+                crate::vault::VaultState::Limbo => VaultStatus::Active,
+                crate::vault::VaultState::Claimed { .. } => VaultStatus::Claimed,
+                crate::vault::VaultState::Invalidated { .. } => VaultStatus::Revoked,
+                crate::vault::VaultState::Unlocked { .. } => VaultStatus::Active,
+            },
+        })
+    }
+}
+
+/// Helper function to convert between LimboVault and DeterministicLimboVault
+pub fn convert_vault(vault: &LimboVault, condition: VaultCondition) -> Result<DeterministicLimboVault, DsmError> {
+    DeterministicLimboVault::from_limbo_vault(vault, condition)
+}
+
+/// Create a deterministic limbo vault with basic parameters
+pub fn create_deterministic_limbo_vault(
+    creator_id: &str,
+    data: Vec<u8>,
+    condition: VaultCondition,
+) -> DeterministicLimboVault {
+    DeterministicLimboVault::new(creator_id, "", data, condition)
+}
+
+/// Create a deterministic limbo vault with a timeout
+pub fn create_deterministic_limbo_vault_with_timeout(
+    creator_id: &str,
+    data: Vec<u8>,
+    timeout_seconds: u64,
+) -> DeterministicLimboVault {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    
+    // Create a time-based condition
+    let condition = VaultCondition::Time(now + timeout_seconds);
+    
+    DeterministicLimboVault::new(creator_id, "", data, condition)
+}
+
+/// Create a deterministic limbo vault with a timeout and recipient
+pub fn create_deterministic_limbo_vault_with_timeout_and_recipient(
+    creator_id: &str,
+    recipient_id: &str,
+    data: Vec<u8>,
+    timeout_seconds: u64,
+) -> DeterministicLimboVault {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    
+    // Create a time-based condition
+    let condition = VaultCondition::Time(now + timeout_seconds);
+    
+    DeterministicLimboVault::new(creator_id, recipient_id, data, condition)
 }
