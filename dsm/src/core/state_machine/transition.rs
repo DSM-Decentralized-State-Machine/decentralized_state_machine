@@ -659,7 +659,7 @@ pub fn create_next_state(
     if matches!(operation_clone, Operation::Mint{..} | Operation::Transfer{..}) ||
        current_state.state_type == "benchmark" ||
        // Also detect benchmark context from thread name
-       std::thread::current().name().is_some_and(|name| 
+       std::thread::current().name().is_some_and(|name|
            name.contains("bench") || name.contains("criterion"))
     {
         next_state.state_type = "benchmark".to_string();

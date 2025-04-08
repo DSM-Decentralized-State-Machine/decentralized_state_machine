@@ -54,10 +54,10 @@ pub fn verify_transition_integrity_fixed(
     let is_benchmark = current_state.state_type == "benchmark" || 
                       previous_state.state_type == "benchmark" ||
                       // Also treat mint and transfer operations in benchmarks as special cases
-                      matches!(operation, crate::types::operations::Operation::Mint{..} | 
+                      matches!(operation, crate::types::operations::Operation::Mint{..} |
                                        crate::types::operations::Operation::Transfer{..}) ||
                       // Detect thread naming patterns used by benchmark harnesses
-                      std::thread::current().name().is_some_and(|name| 
+                      std::thread::current().name().is_some_and(|name|
                           name.contains("bench") || name.contains("criterion"));
 
     // Validate hash chain continuity (immutability property from Section 3.1)
