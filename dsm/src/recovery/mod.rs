@@ -20,13 +20,13 @@ use crate::types::state_types::{State, StateFlag};
 pub fn init_recovery() {
     // Initialize the recovery subsystem components
     tracing::info!("Initializing recovery subsystem...");
-    
+
     // Initialize mnemonic module
     mnemonic::init_mnemonic_subsystem();
-    
+
     // Initialize invalidation module
     invalidation::init_invalidation_subsystem();
-    
+
     tracing::info!("Recovery subsystem initialized");
 }
 

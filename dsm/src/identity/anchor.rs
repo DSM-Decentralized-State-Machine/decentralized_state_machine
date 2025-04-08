@@ -51,15 +51,15 @@ impl IdentityAnchor {
         hasher.update(self.id.as_bytes());
         hasher.update(&self.genesis_hash);
         hasher.update(&self.public_key);
-        
+
         // Calculate the expected commitment hash
         let commitment_hash = hasher.finalize().as_bytes().to_vec();
-        
+
         // Compare with the stored commitment
         // Use constant-time comparison to avoid timing attacks
         Ok(crate::core::state_machine::utils::constant_time_eq(
             &self.commitment_proof,
-            &commitment_hash
+            &commitment_hash,
         ))
     }
 

@@ -3,7 +3,6 @@
 // This module provides functionality to connect to and interact with
 // DSM Storage Nodes for unilateral transactions and DLVs.
 
-
 use crate::types::error::DsmError;
 // These imports are conditionally used based on feature flags
 use crate::communication::storage_cache::StorageCache;
@@ -890,10 +889,7 @@ impl StorageNodeClient {
     ///
     /// # Returns
     /// * `Result<Option<LimboVault>, DsmError>` - The vault if found
-    pub async fn get_vault(
-        &self,
-        vault_id: &str,
-    ) -> Result<Option<LimboVault>, DsmError> {
+    pub async fn get_vault(&self, vault_id: &str) -> Result<Option<LimboVault>, DsmError> {
         // Check cache first for reduced network overhead
         {
             let cache = self.vault_cache.read().await;
@@ -949,23 +945,30 @@ impl StorageNodeClient {
                     claimant: Vec::new(), // Would need the actual claimant data
                     claim_proof: Vec::new(), // Would need the actual proof data
                 }
-            },
+            }
             "revoked" => {
                 VaultState::Invalidated {
-                    invalidated_state_number: vault_json["invalidated_state_number"].as_u64().unwrap_or(0),
-                    reason: vault_json["invalidation_reason"].as_str().unwrap_or("").to_string(),
+                    invalidated_state_number: vault_json["invalidated_state_number"]
+                        .as_u64()
+                        .unwrap_or(0),
+                    reason: vault_json["invalidation_reason"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
                     creator_signature: Vec::new(), // Would need the actual signature data
                 }
-            },
+            }
             "unlocked" => {
                 VaultState::Unlocked {
-                    unlocked_state_number: vault_json["unlocked_state_number"].as_u64().unwrap_or(0),
+                    unlocked_state_number: vault_json["unlocked_state_number"]
+                        .as_u64()
+                        .unwrap_or(0),
                     fulfillment_proof: FulfillmentProof::TimeProof {
                         reference_state: Vec::new(), // Would need the actual reference state
-                        state_proof: Vec::new(), // Would need the actual proof
+                        state_proof: Vec::new(),     // Would need the actual proof
                     },
                 }
-            },
+            }
             _ => VaultState::Limbo, // Default to Limbo for unknown status values
         };
 
@@ -980,21 +983,21 @@ impl StorageNodeClient {
         let vault_id = vault_json["id"].as_str().unwrap_or("").to_string();
         let creator_id = vault_json["creator_id"].as_str().unwrap_or("");
         let creator_public_key = hex::decode(creator_id).unwrap_or_default();
-        
+
         let recipient_id = vault_json["recipient_id"].as_str().unwrap_or("");
         let intended_recipient = if !recipient_id.is_empty() {
             Some(hex::decode(recipient_id).unwrap_or_default())
         } else {
             None
         };
-        
+
         let content_type = vault_json["content_type"]
             .as_str()
             .unwrap_or("application/octet-stream")
             .to_string();
-            
+
         let created_at_state = vault_json["created_at_state"].as_u64().unwrap_or(0);
-        
+
         // In a real implementation, we'd extract actual encrypted content
         let encrypted_content = crate::vault::EncryptedContent {
             encapsulated_key: Vec::new(),
@@ -1002,10 +1005,10 @@ impl StorageNodeClient {
             nonce: Vec::new(),
             aad: Vec::new(),
         };
-        
+
         // Use a default Pedersen commitment for now
         use crate::crypto::pedersen::PedersenCommitment;
-        
+
         // Create the vault structure with available fields
         // This is a very simplified version that wouldn't work in production
         let vault = LimboVault {

@@ -304,19 +304,19 @@ impl TokenPolicy {
 pub struct PolicyVerification {
     /// Type of verification to be performed
     pub verification_type: VerificationType,
-    
+
     /// Additional parameters required for the verification process
     pub parameters: HashMap<String, Vec<u8>>,
-    
+
     /// Timestamp when the verification was conducted
     pub timestamp: u64,
-    
+
     /// Verification result (success or failure)
     pub result: bool,
-    
+
     /// Optional message providing details about the verification result
     pub message: Option<String>,
-    
+
     /// Cryptographic proof of verification (when applicable)
     pub proof: Option<Vec<u8>>,
 }
@@ -336,7 +336,7 @@ impl PolicyVerification {
             proof: None,
         }
     }
-    
+
     /// Record a successful verification
     pub fn success(mut self, message: Option<String>, proof: Option<Vec<u8>>) -> Self {
         self.result = true;
@@ -344,14 +344,14 @@ impl PolicyVerification {
         self.proof = proof;
         self
     }
-    
+
     /// Record a failed verification
     pub fn failure(mut self, message: String) -> Self {
         self.result = false;
         self.message = Some(message);
         self
     }
-    
+
     /// Add a parameter to the verification record
     pub fn with_parameter(mut self, key: &str, value: Vec<u8>) -> Self {
         self.parameters.insert(key.to_string(), value);

@@ -604,9 +604,10 @@ pub fn create_next_state_optimized(
 
     // Calculate sparse index for the new state
     // Add missing sparse index calculation for consistency
-    let sparse_indices = crate::types::state_types::State::calculate_sparse_indices(next_state.state_number)?;
+    let sparse_indices =
+        crate::types::state_types::State::calculate_sparse_indices(next_state.state_number)?;
     next_state.sparse_index = crate::types::state_types::SparseIndex::new(sparse_indices);
-    
+
     // Always set benchmark type in optimized path
     if is_benchmark {
         next_state.state_type = "benchmark".to_string();
@@ -669,10 +670,11 @@ pub fn create_next_state(
 
     // Update the previous state hash
     next_state.prev_state_hash = current_state.hash()?;
-    
+
     // Calculate and update sparse index - critical for proper state chain validation
     // This was missing from the original implementation
-    let sparse_indices = crate::types::state_types::State::calculate_sparse_indices(next_state.state_number)?;
+    let sparse_indices =
+        crate::types::state_types::State::calculate_sparse_indices(next_state.state_number)?;
     next_state.sparse_index = crate::types::state_types::SparseIndex::new(sparse_indices);
 
     // Recompute the hash for the new state

@@ -140,13 +140,14 @@ pub fn verify_transition_integrity_fixed(
             expected_entropy.len(),
             current_state.entropy.len()
         );
-        
+
         // For debug builds, also print the first few bytes of both entropies
         #[cfg(debug_assertions)]
         {
             if !expected_entropy.is_empty() && !current_state.entropy.is_empty() {
                 let expected_prefix = &expected_entropy[..std::cmp::min(8, expected_entropy.len())];
-                let actual_prefix = &current_state.entropy[..std::cmp::min(8, current_state.entropy.len())];
+                let actual_prefix =
+                    &current_state.entropy[..std::cmp::min(8, current_state.entropy.len())];
                 eprintln!(
                     "Entropy prefix comparison: expected={:?}, actual={:?}",
                     expected_prefix, actual_prefix

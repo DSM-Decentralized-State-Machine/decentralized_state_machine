@@ -11,9 +11,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use crate::communication::crypto_net::{
-    CommunicationNonce, DebugCryptoProvider, KyberCryptoProvider,
-};
+use crate::communication::crypto_net::{CommunicationNonce, DebugCryptoProvider, KyberCryptoProvider};
 use crate::communication::transport::Transport;
 use crate::communication::transport::{TransportConnection, TransportListener};
 use crate::communication::TransportType;

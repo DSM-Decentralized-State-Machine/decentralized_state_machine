@@ -184,13 +184,13 @@ impl BluetoothTransport {
     pub fn get_mode(&self) -> BluetoothMode {
         self.mode
     }
-    
+
     /// Check if scanning is active
     pub fn is_scanning_active(&self) -> bool {
         let is_scanning = self.is_scanning.lock().unwrap();
         *is_scanning
     }
-    
+
     /// Check if advertising is active
     pub fn is_advertising_active(&self) -> bool {
         let is_advertising = self.is_advertising.lock().unwrap();

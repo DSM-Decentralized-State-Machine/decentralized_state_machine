@@ -4,9 +4,7 @@
 use dsm::core::state_machine::hashchain::HashChain;
 use dsm::types::error::DsmError;
 use dsm::types::operations::Operation;
-use dsm::types::state_types::{
-    DeviceInfo, PreCommitment, SparseIndex, State, StateFlag, StateParams,
-};
+use dsm::types::state_types::{DeviceInfo, PreCommitment, SparseIndex, State, StateFlag, StateParams};
 use dsm::types::token_types::Balance;
 use pqcrypto_sphincsplus::sphincssha2256fsimple::keypair;
 use std::collections::{HashMap, HashSet};

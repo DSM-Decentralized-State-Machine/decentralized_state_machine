@@ -73,7 +73,7 @@ pub struct IdentitySDK {
 
     /// Relationship contexts for bilateral state isolation
     relationship_contexts: Arc<RwLock<HashMap<String, ExtendedRelationshipContext>>>,
-    
+
     /// Cryptographic key pair for signatures
     signing_keypair: Arc<RwLock<Option<SignatureKeyPair>>>,
 }
@@ -88,63 +88,72 @@ impl IdentitySDK {
             relationship_contexts: Arc::new(RwLock::new(HashMap::new())),
             signing_keypair: Arc::new(RwLock::new(None)),
         };
-        
+
         // Initialize cryptographic keys
         let _ = sdk.initialize_keys();
-        
+
         sdk
     }
-    
+
     /// Initialize cryptographic keys for this identity
     pub fn initialize_keys(&self) -> Result<(), DsmError> {
         // Generate a new SPHINCS+ key pair for signatures
         let keypair = SignatureKeyPair::generate()?;
-        
+
         // Store the key pair
         let mut key_guard = self.signing_keypair.write().unwrap();
         *key_guard = Some(keypair);
-        
+
         Ok(())
     }
-    
+
     /// Get the current identity public key
     pub fn get_public_key(&self) -> Result<Vec<u8>, DsmError> {
         let key_guard = self.signing_keypair.read().unwrap();
-        
+
         match &*key_guard {
             Some(keypair) => Ok(keypair.public_key.clone()),
-            None => Err(DsmError::crypto("No signing keys available".to_string(), None::<std::io::Error>)),
+            None => Err(DsmError::crypto(
+                "No signing keys available".to_string(),
+                None::<std::io::Error>,
+            )),
         }
     }
-    
+
     /// Sign data using the identity's SPHINCS+ private key
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>, DsmError> {
         let key_guard = self.signing_keypair.read().unwrap();
-        
+
         match &*key_guard {
             Some(keypair) => {
                 // Use the SignatureKeyPair to sign the data
                 keypair.sign(data)
-            },
-            None => Err(DsmError::crypto("No signing keys available".to_string(), None::<std::io::Error>)),
+            }
+            None => Err(DsmError::crypto(
+                "No signing keys available".to_string(),
+                None::<std::io::Error>,
+            )),
         }
     }
-    
+
     /// Verify a signature against data using the identity's public key
     pub fn verify_signature(&self, data: &[u8], signature: &[u8]) -> Result<bool, DsmError> {
         let key_guard = self.signing_keypair.read().unwrap();
-        
+
         match &*key_guard {
             Some(keypair) => {
                 // Use the SignatureKeyPair to verify the signature
                 // Convert the byte slice to a Vec<u8> since that's what the method expects
                 let signature_vec = signature.to_vec();
                 keypair.verify(data, &signature_vec)
-            },
-            None => Err(DsmError::crypto("No signing keys available".to_string(), None::<std::io::Error>)),
+            }
+            None => Err(DsmError::crypto(
+                "No signing keys available".to_string(),
+                None::<std::io::Error>,
+            )),
         }
     }
-    
+
     /// Get a reference to the current identity
     pub fn get_identity(&self) -> String {
         self.identity_id.clone()

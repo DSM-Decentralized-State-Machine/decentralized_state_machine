@@ -251,12 +251,12 @@ impl Validator {
                 // Handle lock token validation
                 // Implement appropriate validation logic
                 Ok(())
-            },
+            }
             Operation::UnlockToken { .. } => {
                 // Handle unlock token validation
                 // Implement appropriate validation logic
                 Ok(())
-            },
+            }
         }
     }
 }
@@ -288,12 +288,12 @@ pub fn verify_state_operation(state: &State) -> Result<(), DsmError> {
             // Handle lock token validation
             // Implement appropriate validation logic
             Ok(())
-        },
+        }
         Operation::UnlockToken { .. } => {
             // Handle unlock token validation
             // Implement appropriate validation logic
             Ok(())
-        },
+        }
     }
 }
 
@@ -324,12 +324,12 @@ pub fn verify_state_transition(_state: &State, operation: &Operation) -> Result<
             // Handle lock token validation
             // Implement appropriate validation logic
             Ok(())
-        },
+        }
         Operation::UnlockToken { .. } => {
             // Handle unlock token validation
             // Implement appropriate validation logic
             Ok(())
-        },
+        }
     }
 }
 

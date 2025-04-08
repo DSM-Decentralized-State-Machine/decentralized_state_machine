@@ -199,7 +199,9 @@ impl TokenRegistry {
     /// Update token metadata
     pub fn update_token_metadata(&self, token_id: &str, metadata: Vec<u8>) -> Result<(), DsmError> {
         // Try to update in state manager if method exists (skipping if error occurs)
-        let _ = self.token_state_manager.update_token_metadata(token_id, metadata.clone());
+        let _ = self
+            .token_state_manager
+            .update_token_metadata(token_id, metadata.clone());
 
         // Always update in local registry
         let mut store = self.token_store.write();

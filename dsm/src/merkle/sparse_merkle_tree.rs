@@ -7,9 +7,7 @@ use crate::crypto::blake3::hash_blake3;
 
 use crate::types::error::DsmError;
 use crate::types::operations::TransactionMode;
-use crate::types::state_types::{
-    MerkleProof, MerkleProofParams, NodeId, SerializableHash, SparseIndex,
-};
+use crate::types::state_types::{MerkleProof, MerkleProofParams, NodeId, SerializableHash, SparseIndex};
 use blake3::Hash;
 use std::collections::HashMap;
 

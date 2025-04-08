@@ -13,7 +13,7 @@ pub fn init_mnemonic_subsystem() {
         // Verify the system can generate random entropy
         let _test = MnemonicPhrase::new_random(MnemonicStrength::Words12)
             .expect("Failed to initialize mnemonic subsystem");
-            
+
         // Mark as initialized
         tracing::info!("Mnemonic recovery subsystem initialized");
         MNEMONIC_SYSTEM_INITIALIZED.store(true, Ordering::SeqCst);

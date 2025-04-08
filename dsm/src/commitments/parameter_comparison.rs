@@ -321,7 +321,12 @@ pub fn extract_operation_parameters(
             params.insert("mode".to_string(), bincode::serialize(mode).unwrap());
             Ok(params)
         }
-        Operation::LockToken { token_id, amount, purpose, mode } => {
+        Operation::LockToken {
+            token_id,
+            amount,
+            purpose,
+            mode,
+        } => {
             let mut params = HashMap::new();
             params.insert("operation_type".to_string(), b"lock_token".to_vec());
             params.insert("token_id".to_string(), token_id.as_bytes().to_vec());
@@ -329,8 +334,13 @@ pub fn extract_operation_parameters(
             params.insert("purpose".to_string(), purpose.as_bytes().to_vec());
             params.insert("mode".to_string(), bincode::serialize(mode).unwrap());
             Ok(params)
-        },
-        Operation::UnlockToken { token_id, amount, purpose, mode } => {
+        }
+        Operation::UnlockToken {
+            token_id,
+            amount,
+            purpose,
+            mode,
+        } => {
             let mut params = HashMap::new();
             params.insert("operation_type".to_string(), b"unlock_token".to_vec());
             params.insert("token_id".to_string(), token_id.as_bytes().to_vec());
@@ -338,7 +348,7 @@ pub fn extract_operation_parameters(
             params.insert("purpose".to_string(), purpose.as_bytes().to_vec());
             params.insert("mode".to_string(), bincode::serialize(mode).unwrap());
             Ok(params)
-        },
+        }
     }
 }
 

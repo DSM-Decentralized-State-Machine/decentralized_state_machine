@@ -86,7 +86,7 @@ thread_local! {
 
 /// High-performance variant of generate_deterministic_entropy for concurrent benchmarks
 /// Uses thread-local storage to avoid repeated hasher allocation
-/// 
+///
 /// IMPORTANT: This function must produce exactly the same results as the non-concurrent version
 /// to ensure consistent behavior between transition creation and verification paths.
 pub fn generate_deterministic_entropy_concurrent(

@@ -90,7 +90,7 @@ impl TokenSupply {
             true
         }
     }
-    
+
     /// Check if a supply change using TokenAmount is within allowed limits
     pub fn validate_supply_change(&self, amount: TokenAmount, is_mint: bool) -> bool {
         if is_mint {
@@ -107,7 +107,7 @@ impl TokenSupply {
             if amount.value() > self.circulating_supply {
                 return false;
             }
-            
+
             let new_supply = self.circulating_supply - amount.value();
             if let Some(min) = self.min_supply {
                 if new_supply < min {
@@ -368,10 +368,14 @@ impl Balance {
         }
         self.update_timestamp();
     }
-    
+
     /// Update balance with TokenAmount and operation type
     /// This provides a safer and more semantically accurate way to update balances
-    pub fn update_with_amount(&mut self, amount: TokenAmount, is_addition: bool) -> Result<(), DsmError> {
+    pub fn update_with_amount(
+        &mut self,
+        amount: TokenAmount,
+        is_addition: bool,
+    ) -> Result<(), DsmError> {
         if is_addition {
             self.value = self.value.saturating_add(amount.value());
         } else {
@@ -518,7 +522,12 @@ impl TokenRegistry {
     }
 
     /// Update token supply with unsigned amount and explicit addition/subtraction flag
-    pub fn update_supply(&mut self, token_id: &str, amount: u64, is_addition: bool) -> Result<(), DsmError> {
+    pub fn update_supply(
+        &mut self,
+        token_id: &str,
+        amount: u64,
+        is_addition: bool,
+    ) -> Result<(), DsmError> {
         let supply = self.supplies.get_mut(token_id).ok_or_else(|| {
             DsmError::validation(
                 format!("Token {} not found", token_id),
@@ -836,9 +845,13 @@ impl Token {
     pub fn update_balance(&mut self, amount: u64, is_addition: bool) {
         self.balance.update(amount, is_addition);
     }
-    
+
     /// Update token balance with TokenAmount
-    pub fn update_balance_with_amount(&mut self, amount: TokenAmount, is_addition: bool) -> Result<(), DsmError> {
+    pub fn update_balance_with_amount(
+        &mut self,
+        amount: TokenAmount,
+        is_addition: bool,
+    ) -> Result<(), DsmError> {
         self.balance.update_with_amount(amount, is_addition)
     }
 }

@@ -173,21 +173,21 @@ impl StateMachine {
             ))
         }
     }
-    
+
     /// Apply an operation to a state to create a new state directly
-    /// 
+    ///
     /// This method is useful when you want to apply an operation to a state without updating
     /// the current state of the state machine. It uses the transition module's apply_transition function
     /// to create a new state from the given state and operation.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `state` - The state to apply the operation to
     /// * `operation` - The operation to apply
     /// * `new_entropy` - The entropy to use for the next state
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A result containing the new state or an error
     pub fn apply_operation(
         &self,

@@ -3,9 +3,7 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
-use crate::types::token_types::{
-    Balance, Token, TokenMetadata, TokenStatus, TokenSupply, TokenType,
-};
+use crate::types::token_types::{Balance, Token, TokenMetadata, TokenStatus, TokenSupply, TokenType};
 
 #[derive(Debug)]
 pub enum DsmError {

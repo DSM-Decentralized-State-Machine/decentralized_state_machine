@@ -119,10 +119,10 @@ impl SparseIndexVerifier {
                         let genesis_hash = genesis.hash()?;
                         return Ok(current.prev_state_hash == genesis_hash);
                     }
-                    
+
                     // This is a simplified check - in production we would do proper verification
                     if current.prev_state_hash.len() != 32 {
-                    return Ok(false);
+                        return Ok(false);
                     }
                     let mut next_state = current.clone();
                     next_state.state_number -= 1;

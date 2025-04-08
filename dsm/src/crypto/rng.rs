@@ -11,7 +11,7 @@ pub fn ensure_rng_initialization() {
     if !RNG_INITIALIZED.load(Ordering::SeqCst) {
         // Test the RNG by generating a small amount of randomness
         let _test_bytes = random_bytes(8);
-        
+
         tracing::info!("Random number generator subsystem initialized");
         RNG_INITIALIZED.store(true, Ordering::SeqCst);
     }

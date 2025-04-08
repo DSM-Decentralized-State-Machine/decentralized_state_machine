@@ -2,7 +2,7 @@
 //
 // Higher-level hash operations for DSM that build upon the lower-level Blake3 implementations.
 // This module provides semantic functions that map to the concepts described in the whitepaper.
-// 
+//
 // Note: Core hashing operations are implemented in blake3.rs. This module provides a more
 // domain-specific abstraction layer on top of those primitives.
 

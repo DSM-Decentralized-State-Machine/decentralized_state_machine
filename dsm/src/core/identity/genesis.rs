@@ -6,9 +6,7 @@ use pqcrypto_traits::kem::SharedSecret;
 use pqcrypto_mlkem as kyber;
 use pqcrypto_sphincsplus as sphincsplus;
 use pqcrypto_traits::kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey};
-use pqcrypto_traits::sign::{
-    DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey,
-};
+use pqcrypto_traits::sign::{DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey};
 use rand::{thread_rng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_512};

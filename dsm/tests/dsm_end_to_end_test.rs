@@ -107,7 +107,7 @@ fn create_next_state(
             // Create a new balance with the added amount
             let mut new_balance = current_balance.clone();
             new_balance.update(amount.value(), true); // true indicates addition
-            // The amount field is synchronized internally by the update() method
+                                                      // The amount field is synchronized internally by the update() method
             next_state
                 .token_balances
                 .insert(token_id.clone(), new_balance);

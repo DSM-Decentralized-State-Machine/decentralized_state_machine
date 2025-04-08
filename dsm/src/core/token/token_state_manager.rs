@@ -15,7 +15,6 @@ use crate::types::{
     error::DsmError,
     state_types::State,
     token_types::{Balance, Token, TokenStatus},
-   
 };
 
 /// TokenStateManager implements atomic state updates for tokens as specified in the whitepaper.
@@ -34,7 +33,6 @@ pub struct TokenStateManager {
     /// Runtime for async operations
     runtime: Option<Runtime>,
 }
-
 
 #[derive(Debug)]
 pub struct TokenTransfer {
@@ -67,7 +65,11 @@ impl TokenTransfer {
     }
 
     // / Create a new TokenTransfer with token store and balance cache
-    pub fn with_stores(mut self, token_store: Arc<RwLock<HashMap<String, Token>>>, balance_cache: Arc<RwLock<HashMap<String, Balance>>>) -> Self {
+    pub fn with_stores(
+        mut self,
+        token_store: Arc<RwLock<HashMap<String, Token>>>,
+        balance_cache: Arc<RwLock<HashMap<String, Balance>>>,
+    ) -> Self {
         self.token_store = Some(token_store);
         self.balance_cache = Some(balance_cache);
         self
@@ -78,8 +80,6 @@ impl TokenTransfer {
 pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
     DsmError::token_error(message.into(), None::<std::io::Error>)
 }
-
-
 
 // Imports
 use crate::cpta::policy_verification::{PolicyVerificationResult, verify_policy};
@@ -450,7 +450,7 @@ impl TokenStateManager {
         Ok(true) // Placeholder
     }
 
-    /// Verify token ownership proof 
+    /// Verify token ownership proof
     #[allow(unused_variables)]
     fn verify_token_ownership(&self, token_id: &str, proof: &[u8]) -> Result<bool, DsmError> {
         // Implementation would verify cryptographic proof
@@ -503,17 +503,16 @@ impl TokenStateManager {
         };
 
         // Retrieve policy
-        let token_policy = match runtime.block_on(async {
-            policy_store.get_policy(&policy_anchor).await
-        }) {
-            Ok(policy) => policy,
-            Err(e) => {
-                return Err(DsmError::validation(
-                    format!("Failed to retrieve policy for token {}: {}", token_id, e),
-                    Some(e),
-                ));
-            }
-        };
+        let token_policy =
+            match runtime.block_on(async { policy_store.get_policy(&policy_anchor).await }) {
+                Ok(policy) => policy,
+                Err(e) => {
+                    return Err(DsmError::validation(
+                        format!("Failed to retrieve policy for token {}: {}", token_id, e),
+                        Some(e),
+                    ));
+                }
+            };
 
         // Convert PolicyFile to Policy for verification
         let policy = Policy {
@@ -525,19 +524,15 @@ impl TokenStateManager {
         let result: PolicyVerificationResult = verify_policy(&policy, operation, None, None, None);
         match result {
             PolicyVerificationResult::Valid => Ok(()),
-            PolicyVerificationResult::Invalid { message } => {
-                Err(DsmError::policy_violation(
-                    token_id.clone(),
-                    message,
-                    None::<std::io::Error>,
-                ))
-            },
-            PolicyVerificationResult::Unverifiable { message } => {
-                Err(DsmError::validation(
-                    format!("Policy verification failed: {}", message),
-                    None::<std::io::Error>,
-                ))
-            }
+            PolicyVerificationResult::Invalid { message } => Err(DsmError::policy_violation(
+                token_id.clone(),
+                message,
+                None::<std::io::Error>,
+            )),
+            PolicyVerificationResult::Unverifiable { message } => Err(DsmError::validation(
+                format!("Policy verification failed: {}", message),
+                None::<std::io::Error>,
+            )),
         }
     }
 
@@ -546,7 +541,6 @@ impl TokenStateManager {
     pub fn make_balance_key(owner_pk: &[u8], token_id: &str) -> String {
         format!("{}{}", hex::encode(owner_pk), token_id)
     }
-
 
     // ------------------------------------------------------------------------
     //                           Token Store Methods
@@ -683,7 +677,8 @@ impl TokenStateManager {
         token_store: Arc<RwLock<HashMap<String, Token>>>,
         balance_cache: Arc<RwLock<HashMap<String, Balance>>>,
     ) -> Result<TokenTransfer, DsmError> {
-        let transfer = Self::create_token_transfer(sender_state, recipient_state, amount, token_id)?;
+        let transfer =
+            Self::create_token_transfer(sender_state, recipient_state, amount, token_id)?;
         Ok(transfer.with_stores(token_store, balance_cache))
     }
 }

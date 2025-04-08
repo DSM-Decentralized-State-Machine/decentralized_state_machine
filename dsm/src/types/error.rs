@@ -250,7 +250,7 @@ pub enum DsmError {
         /// Optional additional details about the feature or why it's unavailable
         details: Option<String>,
     },
-    
+
     /// Token Policy Violation error
     ///
     /// Occurs when a token operation violates its Content-Addressed Token Policy Anchor (CTPA)
@@ -596,7 +596,7 @@ impl DsmError {
             requested,
         }
     }
-    
+
     /// Creates a new timeout error
     ///
     /// # Arguments
@@ -634,9 +634,7 @@ impl DsmError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            DsmError::Network { .. }
-                | DsmError::Serialization { .. }
-                | DsmError::LockError
+            DsmError::Network { .. } | DsmError::Serialization { .. } | DsmError::LockError
         )
     }
 
@@ -664,14 +662,18 @@ impl DsmError {
                 | DsmError::Merkle(_)
         )
     }
-    
+
     /// Creates a new policy violation error
     ///
     /// # Arguments
     /// * `token_id` - ID of the token with policy violation
     /// * `message` - Description of the policy violation
     /// * `source` - Optional source error that caused this error
-    pub fn policy_violation<E>(token_id: String, message: impl Into<String>, source: Option<E>) -> Self
+    pub fn policy_violation<E>(
+        token_id: String,
+        message: impl Into<String>,
+        source: Option<E>,
+    ) -> Self
     where
         E: Error + Send + Sync + 'static,
     {
@@ -809,7 +811,11 @@ impl Display for DsmError {
                 }
                 Ok(())
             }
-            DsmError::PolicyViolation { token_id, message, source } => {
+            DsmError::PolicyViolation {
+                token_id,
+                message,
+                source,
+            } => {
                 write!(f, "Token policy violation for {}: {}", token_id, message)?;
                 if let Some(s) = source {
                     write!(f, " - caused by: {}", s)?;

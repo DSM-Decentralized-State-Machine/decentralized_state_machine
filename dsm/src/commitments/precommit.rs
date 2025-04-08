@@ -13,9 +13,7 @@
 use crate::types::error::DsmError;
 use crate::types::operations::Operation;
 use crate::types::state_types::State;
-use pqcrypto_sphincsplus::sphincssha2256fsimple::{
-    detached_sign, verify_detached_signature, PublicKey,
-};
+use pqcrypto_sphincsplus::sphincssha2256fsimple::{detached_sign, verify_detached_signature, PublicKey};
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey as _, SecretKey as _};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
