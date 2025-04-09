@@ -4,11 +4,8 @@
 // for efficient routing and epidemic dissemination in distributed storage nodes.
 
 use crate::types::StorageNode;
-use blake3::Hash;
 use rand::{Rng, seq::SliceRandom};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
 
 /// Distance metric for nodes in the topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -69,13 +66,14 @@ impl NodeId {
     }
     
     /// Get the raw bytes
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.raw
     }
     
     /// Get a hex string representation
     pub fn to_hex(&self) -> String {
-        hex::encode(&self.raw)
+        hex::encode(self.raw)
     }
     
     /// Calculate the XOR distance to another node ID
@@ -83,8 +81,8 @@ impl NodeId {
         let mut result = 0u128;
         
         // XOR the first 16 bytes to create the distance
-        for i in 0..16 {
-            let xor = self.raw[i] ^ other.raw[i];
+        for (_i, (&self_byte, &other_byte)) in self.raw.iter().zip(other.raw.iter()).enumerate().take(16) {
+            let xor = self_byte ^ other_byte;
             result = (result << 8) | xor as u128;
         }
         
@@ -96,8 +94,8 @@ impl NodeId {
         let mut result = 0u128;
         
         // XOR the first 16 bytes to create the distance
-        for i in 0..16 {
-            let xor = self.raw[i] ^ key_hash[i];
+        for (_i, (&self_byte, &key_byte)) in self.raw.iter().zip(key_hash.iter()).enumerate().take(16) {
+            let xor = self_byte ^ key_byte;
             result = (result << 8) | xor as u128;
         }
         
@@ -128,7 +126,7 @@ impl From<&StorageNode> for NodeId {
 
 impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.raw).chars().take(16).collect::<String>())
+        write!(f, "{}", hex::encode(self.raw).chars().take(16).collect::<String>())
     }
 }
 
@@ -237,7 +235,7 @@ impl SmallWorldTopology {
             }
             
             // Update routing buckets
-            let bucket_entry = self.routing_buckets.entry(bucket).or_insert_with(Vec::new);
+            let bucket_entry = self.routing_buckets.entry(bucket).or_default();
             
             if bucket_entry.len() < self.max_bucket_size {
                 bucket_entry.push(node.clone());
@@ -329,6 +327,7 @@ impl SmallWorldTopology {
     }
     
     /// Find responsible nodes for a key
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn find_responsible_nodes(&self, key_hash: &[u8; 32], count: usize) -> Vec<StorageNode> {
         // Convert the key hash to a target ID
         let target_id = NodeId::from_bytes(*key_hash);

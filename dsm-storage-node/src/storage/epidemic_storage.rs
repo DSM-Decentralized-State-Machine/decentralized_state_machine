@@ -5,10 +5,10 @@
 // coordination and scalability.
 
 use crate::error::Result;
-use crate::storage::small_world::{NodeId, SmallWorldTopology, SmallWorldConfig, calculate_key_hash};
+use crate::storage::small_world::{SmallWorldTopology, SmallWorldConfig, calculate_key_hash};
 use crate::storage::vector_clock::{VectorClock, VectorClockRelation};
-use crate::types::storage_types::{StorageResponse, StorageStats, StorageEvent, StorageEventType};
-use crate::types::{BlindedStateEntry, StorageNode, NodeStatus, EntrySelector};
+use crate::types::storage_types::{StorageResponse, StorageStats};
+use crate::types::{BlindedStateEntry, StorageNode, EntrySelector};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Semaphore;
 use tokio::time::interval;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, warn};
 
 /// Entry wrapper with metadata for epidemic coordination
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -396,7 +396,7 @@ pub struct EpidemicStorage {
     topology: Arc<RwLock<SmallWorldTopology>>,
     
     /// Gossip channel
-    gossip_tx: Sender<GossipEvent>,
+    gossip_tx: Arc<RwLock<Sender<GossipEvent>>>,
     
     /// Active gossip operations semaphore
     gossip_semaphore: Arc<Semaphore>,
@@ -422,6 +422,7 @@ pub struct EpidemicStorage {
 }
 
 /// Entry filter for pruning and storing policies
+#[derive(Default)]
 struct EntryFilter {
     /// Entry priorities to keep
     priorities: Option<(i32, i32)>,
@@ -434,17 +435,6 @@ struct EntryFilter {
     
     /// Maximum verification count
     max_verification: Option<u32>,
-}
-
-impl Default for EntryFilter {
-    fn default() -> Self {
-        Self {
-            priorities: None,
-            regions: None,
-            max_age: None,
-            max_verification: None,
-        }
-    }
 }
 
 impl EntryFilter {
@@ -515,18 +505,18 @@ impl EpidemicStorage {
             region: config.region.clone(),
             storage,
             topology,
-            gossip_tx,
+            gossip_tx: Arc::new(RwLock::new(gossip_tx)),
             gossip_semaphore: Arc::new(Semaphore::new(config.max_concurrent_gossip)),
             retry_queue: Arc::new(Mutex::new(VecDeque::new())),
             config,
             stats,
-            background_tasks: Mutex::new(Vec::new()),
+            background_tasks: Mutex::new(Vec::new()), // Create empty vector rather than cloning
             started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             entry_filter: Arc::new(Mutex::new(EntryFilter::default())),
         };
         
         // Initialize the storage with data from the backing storage if provided
-        if let Some(backing) = backing_storage {
+        if let Some(_backing) = backing_storage {
             // TODO: Initialize from backing storage
         }
         
@@ -540,32 +530,39 @@ impl EpidemicStorage {
         }
         
         // Create a gossip receiver
-        let (gossip_tx, mut gossip_rx) = mpsc::channel(1000);
+        let (gossip_tx, gossip_rx) = mpsc::channel(1000);
         
         // Update the sender
-        let _ = std::mem::replace(&self.gossip_tx, gossip_tx);
+        {
+            let mut tx_guard = self.gossip_tx.write();
+            *tx_guard = gossip_tx;
+        } // Drop the MutexGuard here before the await point
         
         // Add bootstrap nodes to the topology
-        let mut topology = self.topology.write();
-        for node in &self.config.bootstrap_nodes {
-            topology.add_node(node.clone());
-        }
+        {
+            let mut topology = self.topology.write();
+            for node in &self.config.bootstrap_nodes {
+                topology.add_node(node.clone());
+            }
+            
+            // Update long links
+            topology.update_long_links();
+        } // Drop the MutexGuard here before the await point
         
-        // Update long links
-        topology.update_long_links();
-        
-        // Start the background tasks
+        // Start the background tasks and properly handle the return types
         let gossip_handle = self.start_gossip_task(gossip_rx);
         let anti_entropy_handle = self.start_anti_entropy_task();
         let topology_handle = self.start_topology_task();
         let pruning_handle = self.start_pruning_task();
         
-        // Store the task handles
-        let mut tasks = self.background_tasks.lock().unwrap();
-        tasks.push(gossip_handle);
-        tasks.push(anti_entropy_handle);
-        tasks.push(topology_handle);
-        tasks.push(pruning_handle);
+        // Store the task handles - Scope the mutex guard to prevent holding across await points
+        {
+            let mut tasks = self.background_tasks.lock().unwrap();
+            tasks.push(gossip_handle);
+            tasks.push(anti_entropy_handle);
+            tasks.push(topology_handle);
+            tasks.push(pruning_handle);
+        } // Mutex guard is dropped here
         
         // Mark as started
         self.started.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -603,25 +600,34 @@ impl EpidemicStorage {
                             }
                         };
                         
-                        // Perform gossip
-                        let topology_guard = topology.read();
-                        let targets = topology_guard.get_broadcast_targets(config.gossip_fanout);
-                        drop(topology_guard);
+                        // Safely gather all necessary information before async boundaries
+                        let gossip_targets = {
+                            let topology_guard = topology.read();
+                            let targets = topology_guard.get_broadcast_targets(config.gossip_fanout);
+                            drop(topology_guard);
+                            targets
+                        };
                         
-                        if !targets.is_empty() {
-                            let digest = create_digest(&node_id, &storage, config.max_entries_per_gossip, config.gossip_ttl);
-                            
-                            // Release the permit as soon as we're done with shared resources
-                            drop(permit);
-                            
-                            // Send digest to targets
-                            for target in targets {
+                        // Safely create digest outside of await points
+                        let digest_content = {
+                            if !gossip_targets.is_empty() {
+                                Some(create_digest(&node_id, &storage, config.max_entries_per_gossip, config.gossip_ttl))
+                            } else {
+                                None
+                            }
+                        };
+                        
+                        // Release the permit as soon as we're done with shared resources
+                        drop(permit);
+                        
+                        // Now perform network operations with our extracted data
+                        if let Some(digest) = digest_content {
+                            for target in gossip_targets {
                                 if let Err(e) = send_digest_to_node(&digest, &target).await {
                                     warn!("Failed to send digest to {}: {}", target.id, e);
                                 }
                             }
                         } else {
-                            drop(permit);
                             debug!("No gossip targets available");
                         }
                     }
@@ -685,26 +691,33 @@ impl EpidemicStorage {
             loop {
                 interval.tick().await;
                 
-                // Perform anti-entropy with random peers
-                let topology_guard = topology.read();
-                let mut all_neighbors = topology_guard.all_neighbors();
-                drop(topology_guard);
+                // Perform anti-entropy with random peers - safely extracting data before async boundary
+                let peers_for_anti_entropy = {
+                    let topology_guard = topology.read();
+                    let all_neighbors = topology_guard.all_neighbors();
+                    drop(topology_guard); // Release lock before await points
+                    
+                    // Create a thread-safe subset selection
+                    let mut neighbors_copy = all_neighbors.clone();
+                    
+                    // Use thread-local RNG within this scope
+                    {
+                        use rand::seq::SliceRandom;
+                        let mut rng = rand::thread_rng();
+                        neighbors_copy.shuffle(&mut rng);
+                    }
+                    
+                    // Calculate subset size and select peers
+                    let subset_size = std::cmp::min(3, neighbors_copy.len());
+                    neighbors_copy.into_iter().take(subset_size).collect::<Vec<_>>()
+                };
                 
-                // Shuffle neighbors
-                use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
-                all_neighbors.shuffle(&mut rng);
-                
-                // Limit to a subset of peers for each anti-entropy round
-                let subset_size = std::cmp::min(3, all_neighbors.len());
-                let selected_peers = all_neighbors.into_iter().take(subset_size).collect::<Vec<_>>();
-                
-                if !selected_peers.is_empty() {
-                    debug!("Running anti-entropy with {} peers", selected_peers.len());
+                if !peers_for_anti_entropy.is_empty() {
+                    debug!("Running anti-entropy with {} peers", peers_for_anti_entropy.len());
                     
                     let mut futures = Vec::new();
                     
-                    for peer in selected_peers {
+                    for peer in peers_for_anti_entropy {
                         let peer_id = peer.id.clone();
                         let node_id = node_id.clone();
                         let storage = storage.clone();
@@ -757,26 +770,33 @@ impl EpidemicStorage {
                     );
                 }
                 
-                // Ping random peers to check connectivity
-                let topology_guard = topology.read();
-                let mut all_neighbors = topology_guard.all_neighbors();
-                drop(topology_guard);
+                // Ping random peers to check connectivity - safely extracting data before async boundary
+                let peers_for_ping = {
+                    let topology_guard = topology.read();
+                    let all_neighbors = topology_guard.all_neighbors();
+                    drop(topology_guard); // Release lock before await points
+                    
+                    // Create a thread-safe subset selection
+                    let mut neighbors_copy = all_neighbors.clone();
+                    
+                    // Use thread-local RNG within this scope
+                    {
+                        use rand::seq::SliceRandom;
+                        let mut rng = rand::thread_rng();
+                        neighbors_copy.shuffle(&mut rng);
+                    }
+                    
+                    // Select subset of peers for ping
+                    let subset_size = std::cmp::min(5, neighbors_copy.len());
+                    neighbors_copy.into_iter().take(subset_size).collect::<Vec<_>>()
+                };
                 
-                // Shuffle neighbors
-                use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
-                all_neighbors.shuffle(&mut rng);
-                
-                // Limit to a subset of peers for each ping round
-                let subset_size = std::cmp::min(5, all_neighbors.len());
-                let selected_peers = all_neighbors.into_iter().take(subset_size).collect::<Vec<_>>();
-                
-                if !selected_peers.is_empty() {
-                    debug!("Pinging {} peers", selected_peers.len());
+                if !peers_for_ping.is_empty() {
+                    debug!("Pinging {} peers", peers_for_ping.len());
                     
                     let mut futures = Vec::new();
                     
-                    for peer in selected_peers {
+                    for peer in peers_for_ping {
                         let peer_id = peer.id.clone();
                         let node_id = node_id.clone();
                         
@@ -916,7 +936,7 @@ impl EpidemicStorage {
     
     /// Get the gossip sender
     pub fn get_gossip_sender(&self) -> Sender<GossipEvent> {
-        self.gossip_tx.clone()
+        self.gossip_tx.read().clone()
     }
     
     /// Announce to bootstrap nodes
@@ -1105,7 +1125,7 @@ impl super::StorageEngine for EpidemicStorage {
         let blinded_id = entry.blinded_id.clone();
         
         // Create epidemic entry
-        let epidemic_entry = EpidemicEntry::new(entry, &self.node_id);
+        let epidemic_entry = EpidemicEntry::new(entry.clone(), &self.node_id);
         
         // Store locally
         self.storage.insert(blinded_id.clone(), epidemic_entry.clone());
@@ -1139,9 +1159,10 @@ impl super::StorageEngine for EpidemicStorage {
             tokio::spawn({
                 let self_clone = self.clone();
                 let entry_clone = epidemic_entry.clone();
+                let blinded_id_clone = blinded_id.clone();
                 async move {
                     if let Err(e) = self_clone.propagate_entry(&entry_clone).await {
-                        warn!("Failed to propagate entry {}: {}", blinded_id, e);
+                        warn!("Failed to propagate entry {}: {}", blinded_id_clone, e);
                     }
                 }
             });
@@ -1161,16 +1182,23 @@ impl super::StorageEngine for EpidemicStorage {
     /// Retrieve a blinded state entry by its ID
     async fn retrieve(&self, blinded_id: &str) -> Result<Option<BlindedStateEntry>> {
         // Try local storage first
-        if let Some(entry) = self.storage.get(blinded_id) {
+        let entry_option = if let Some(entry) = self.storage.get(blinded_id) {
             // Check if expired
             if entry.is_expired() {
                 // Remove if expired
                 self.storage.remove(blinded_id);
-                return Ok(None);
+                None
+            } else {
+                // Return a clone of the entry
+                Some(entry.entry.clone())
             }
-            
-            // Return a clone of the entry
-            return Ok(Some(entry.entry.clone()));
+        } else {
+            None
+        };
+        
+        // Early return if found in local storage
+        if entry_option.is_some() {
+            return Ok(entry_option);
         }
         
         // If not found locally and we're started, try to retrieve from other nodes
@@ -1280,7 +1308,7 @@ impl super::StorageEngine for EpidemicStorage {
             .iter()
             .map(|item| item.key().clone())
             .skip(offset)
-            .take(limit.unwrap_or(std::usize::MAX))
+            .take(limit.unwrap_or(usize::MAX))
             .collect();
             
         Ok(ids)
@@ -1301,11 +1329,12 @@ impl Clone for EpidemicStorage {
             region: self.region.clone(),
             storage: self.storage.clone(),
             topology: self.topology.clone(),
-            gossip_tx: self.gossip_tx.clone(),
+            gossip_tx: Arc::clone(&self.gossip_tx),
             gossip_semaphore: self.gossip_semaphore.clone(),
             retry_queue: self.retry_queue.clone(),
             config: self.config.clone(),
             stats: self.stats.clone(),
+            // We don't clone background tasks, as they're tied to the original instance
             background_tasks: Mutex::new(Vec::new()),
             started: self.started.clone(),
             entry_filter: self.entry_filter.clone(),
@@ -1313,7 +1342,7 @@ impl Clone for EpidemicStorage {
     }
 }
 
-/// Create a digest from storage
+/// Create a digest from storage using thread-safe RNG
 fn create_digest(
     node_id: &str,
     storage: &DashMap<String, EpidemicEntry>,
@@ -1324,17 +1353,23 @@ fn create_digest(
     
     // Select a random subset of entries if we have more than max_entries
     let keys: Vec<String> = if storage.len() > max_entries {
-        use rand::seq::IteratorRandom;
-        let mut rng = rand::thread_rng();
-        storage
-            .iter()
-            .map(|item| item.key().clone())
-            .choose_multiple(&mut rng, max_entries)
+        // First collect all keys into a thread-local vector
+        let all_keys: Vec<String> = storage.iter().map(|item| item.key().clone()).collect();
+        
+        // Use thread-local RNG within a contained scope
+        {
+            let mut keys_copy = all_keys.clone();
+            // Use RNG in a contained scope
+            {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                keys_copy.shuffle(&mut rng);
+            }
+            keys_copy.truncate(max_entries);
+            keys_copy
+        }
     } else {
-        storage
-            .iter()
-            .map(|item| item.key().clone())
-            .collect()
+        storage.iter().map(|item| item.key().clone()).collect()
     };
     
     // Create digest entries
@@ -1368,7 +1403,7 @@ async fn handle_digest(
     node_id: &str,
     storage: &DashMap<String, EpidemicEntry>,
     topology: &RwLock<SmallWorldTopology>,
-    stats: &RwLock<StorageStats>,
+    _stats: &RwLock<StorageStats>,
 ) {
     debug!("Received digest from {} with {} entries", digest.origin_id, digest.entries.len());
     
@@ -1376,21 +1411,21 @@ async fn handle_digest(
     let mut to_request = Vec::new();
     let mut to_send = Vec::new();
     
-    for (key, digest_entry) in digest.entries {
-        match storage.get(&key) {
+    for (key, digest_entry) in &digest.entries {
+        match storage.get(key.as_str()) {
             Some(our_entry) => {
                 match our_entry.vector_clock.compare(&digest_entry.vector_clock) {
                     VectorClockRelation::Before => {
                         // We need a newer version
-                        to_request.push(key);
+                        to_request.push(key.clone());
                     }
                     VectorClockRelation::After => {
                         // We have a newer version
-                        to_send.push(key);
+                        to_send.push(key.clone());
                     }
                     VectorClockRelation::Concurrent => {
                         // Concurrent updates, request to reconcile
-                        to_request.push(key);
+                        to_request.push(key.clone());
                     }
                     VectorClockRelation::Equal => {
                         // Nothing to do
@@ -1399,7 +1434,7 @@ async fn handle_digest(
             }
             None => {
                 // We don't have this entry
-                to_request.push(key);
+                to_request.push(key.clone());
             }
         }
     }
@@ -1463,24 +1498,41 @@ async fn handle_digest(
         let mut new_digest = digest.clone();
         new_digest.ttl -= 1;
         
-        // Choose a few random peers to propagate to
-        let peers = {
-            let topology_guard = topology.read();
-            let mut peers = topology_guard
-                .all_neighbors()
-                .into_iter()
-                .filter(|node| node.id != digest.origin_id && node.id != origin_node.id)
-                .collect::<Vec<_>>();
+        // Choose a few random peers to propagate to - with thread-safety adjustments
+        let propagation_peers = {
+            // First, extract all necessary data under lock
+            let digestion_peers = {
+                let topology_guard = topology.read();
+                let peers = topology_guard
+                    .all_neighbors()
+                    .into_iter()
+                    .filter(|node| node.id != digest.origin_id && node.id != origin_node.id)
+                    .collect::<Vec<_>>();
+                drop(topology_guard); // Explicitly drop guard before shuffling
+                peers
+            };
+            
+            // Then apply randomization in a contained scope
+            if !digestion_peers.is_empty() {
+                let mut peers_copy = digestion_peers.clone();
+                // Isolated RNG scope
+                {
+                    use rand::seq::SliceRandom;
+                    let mut rng = rand::thread_rng();
+                    peers_copy.shuffle(&mut rng);
+                }
                 
-            // Shuffle and take a small subset
-            use rand::seq::SliceRandom;
-            let mut rng = rand::thread_rng();
-            peers.shuffle(&mut rng);
-            peers.truncate(2); // Propagate to 2 random peers
-            peers
+                // Take at most 2 peers
+                if peers_copy.len() > 2 {
+                    peers_copy.truncate(2);
+                }
+                peers_copy
+            } else {
+                Vec::new()
+            }
         };
         
-        for peer in peers {
+        for peer in propagation_peers {
             if let Err(e) = send_digest_to_node(&new_digest, &peer).await {
                 warn!("Failed to propagate digest to {}: {}", peer.id, e);
             }
@@ -1539,7 +1591,7 @@ async fn handle_request(
 /// Handle a response
 async fn handle_response(
     response: NodeResponse,
-    node_id: &str,
+    _node_id: &str,
     storage: &DashMap<String, EpidemicEntry>,
     stats: &RwLock<StorageStats>,
 ) {
@@ -1552,7 +1604,7 @@ async fn handle_response(
     for entry in response.entries {
         let blinded_id = entry.entry.blinded_id.clone();
         
-        match storage.get(&blinded_id) {
+        match storage.get_mut(&blinded_id) {
             Some(mut our_entry) => {
                 // Check vector clocks
                 let bytes_before = our_entry.entry.encrypted_payload.len();
@@ -1592,7 +1644,7 @@ async fn handle_response(
         // Update stats
         let mut stats_guard = stats.write();
         stats_guard.total_entries = storage.len();
-        stats_guard.total_bytes = stats_guard.total_bytes.saturating_add(new_bytes as usize);
+        stats_guard.total_bytes = stats_guard.total_bytes.saturating_add(new_bytes);
     }
 }
 
@@ -1612,7 +1664,7 @@ async fn handle_update(
     let mut new_bytes = 0;
     
     // Process the entry
-    match storage.get(&blinded_id) {
+    match storage.get_mut(&blinded_id) {
         Some(mut our_entry) => {
             // Check vector clocks
             let bytes_before = our_entry.entry.encrypted_payload.len();
@@ -1753,7 +1805,7 @@ async fn handle_announcement(
         let mut topology_guard = topology.write();
         
         for peer_id in peers {
-            if let Some(peer) = topology_guard.get_node_by_id(&peer_id) {
+            if let Some(_peer) = topology_guard.get_node_by_id(&peer_id) {
                 // We already know this peer
                 continue;
             }
@@ -1827,7 +1879,7 @@ async fn perform_anti_entropy(
     peer_id: &str,
     peer: &StorageNode,
     storage: &DashMap<String, EpidemicEntry>,
-    stats: &RwLock<StorageStats>,
+    _stats: &RwLock<StorageStats>,
 ) -> Result<()> {
     debug!("Performing anti-entropy with node {}", peer_id);
     
@@ -1841,7 +1893,6 @@ async fn perform_anti_entropy(
         }
         Err(e) => {
             warn!("Failed to send digest to {}: {}", peer_id, e);
-            return Err(e);
         }
     }
     
@@ -1865,18 +1916,18 @@ async fn request_entries_from_node(request: &NodeRequest, node: &StorageNode) ->
         Ok(_) => {
             // TODO: Wait for response
             // This is a placeholder, in a real implementation we would have a response channel
-            return Ok(NodeResponse {
+            Ok(NodeResponse {
                 node_id: node.id.clone(),
                 entries: Vec::new(),
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs(),
-            });
+            })
         }
         Err(e) => {
             warn!("Failed to send request to {}: {}", node.id, e);
-            return Err(e);
+            Err(e)
         }
     }
 }
@@ -1912,6 +1963,7 @@ async fn ping_node(origin: &str, node: &StorageNode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::StorageEngine;
     
     #[tokio::test]
     async fn test_epidemic_storage_basic() {

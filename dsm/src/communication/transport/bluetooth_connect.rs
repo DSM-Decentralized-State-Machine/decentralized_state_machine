@@ -70,13 +70,14 @@ enum BluetoothEvent {
     Disconnected(#[allow(dead_code)] SocketAddr),
 
     /// Error occurred event
-    Error(#[allow(dead_code)] String),
+    #[allow(dead_code)]
+    DsmError(String),
 }
-
 #[cfg(feature = "bluetooth")]
 impl BluetoothTransport {
     /// Create a new bluetooth transport
     pub fn new(device_name: String, service_uuid: String) -> Self {
+        #[allow(unused_variables)]
         let (tx, rx) = mpsc::channel(100);
 
         Self {
@@ -280,7 +281,7 @@ impl Transport for BluetoothTransport {
             local_addr: addr,
             connections: self.connections.clone(),
             tx: self.tx.clone(),
-            rx: new_rx,
+            rx: tokio::sync::Mutex::new(new_rx),
         };
 
         Ok(Box::new(listener))
@@ -452,10 +453,9 @@ impl Clone for BluetoothConnection {
             local_addr: self.local_addr,
             connections: self.connections.clone(),
             tx: self.tx.clone(),
-        }
     }
 }
-
+}
 /// Bluetooth listener for incoming connections
 #[cfg(feature = "bluetooth")]
 pub struct BluetoothListener {
@@ -472,12 +472,26 @@ pub struct BluetoothListener {
 
     /// Event reception channel
     #[allow(dead_code)]
-    rx: mpsc::Receiver<BluetoothEvent>,
+    rx: tokio::sync::Mutex<mpsc::Receiver<BluetoothEvent>>,
 }
 
 #[cfg(feature = "bluetooth")]
 #[async_trait]
 impl TransportListener for BluetoothListener {
+    fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    async fn close(&self) -> Result<(), DsmError> {
+        // In a real implementation, this would stop the Bluetooth advertisement
+        // and close any resources associated with listening
+        log::info!("Closing Bluetooth listener at {:?}", self.local_addr);
+        Ok(())
+    }
+
+    fn transport_type(&self) -> TransportType {
+        TransportType::Bluetooth
+    }
     async fn accept(&self) -> Result<Box<dyn TransportConnection>, DsmError> {
         // In a real implementation, this would:
         // 1. Wait for an incoming Bluetooth connection
@@ -489,73 +503,71 @@ impl TransportListener for BluetoothListener {
         // acceptance process that better resembles real Bluetooth behavior
         log::debug!("Waiting for incoming Bluetooth connections");
 
-        // Wait for an event on the channel
-        let mut rx = self.rx.clone();
+        // Get receiver with tokio mutex to ensure Send safety across await points
+        let mut rx = self.rx.lock().await;
 
-        // Timeout after a reasonable wait period
-        let timeout = tokio::time::sleep(tokio::time::Duration::from_secs(3));
-
-        tokio::select! {
-            // If we receive an event before timeout
-            Some(event) = rx.recv() => {
-                match event {
-                    BluetoothEvent::Connected(addr) => {
-                        log::info!("Accepted incoming Bluetooth connection from {:?}", addr);
-                        
-                        // Create a connection state
-                        let conn_state = BluetoothConnectionState {
-                            remote_addr: addr,
-                            receive_buffer: Vec::new(),
-                            is_connected: true,
-                        };
-                        
-                        // Store the connection
-                        {
-                            let mut conns = self.connections.lock().unwrap();
-                            conns.insert(addr, conn_state);
-                        }
-                        
-                        // Create and return a connection
-                        let connection = BluetoothConnection {
-                            remote_addr: addr,
-                            local_addr: self.local_addr,
-                            connections: self.connections.clone(),
-                            tx: self.tx.clone(),
-                        };
-                        
-                        return Ok(Box::new(connection));
-                    },
-                    BluetoothEvent::Error(err) => {
-                        return Err(DsmError::network(err, None::<std::io::Error>));
-                    },
-                    _ => {
-                        // Ignore other event types
+        // If we receive an event
+        if let Some(event) = rx.recv().await {
+            match event {
+                BluetoothEvent::Connected(addr) => {
+                    log::info!("Accepted incoming Bluetooth connection from {:?}", addr);
+                    
+                    // Create a connection state
+                    let conn_state = BluetoothConnectionState {
+                        remote_addr: addr,
+                        receive_buffer: Vec::new(),
+                        is_connected: true,
+                    };
+                    
+                    // Store the connection
+                    {
+                        let mut conns = self.connections.lock().unwrap();
+                        conns.insert(addr, conn_state);
                     }
+                    
+                    // Create and return a connection
+                    let connection = BluetoothConnection {
+                        remote_addr: addr,
+                        local_addr: self.local_addr,
+                        connections: self.connections.clone(),
+                        tx: self.tx.clone(),
+                    };
+                    
+                    return Ok(Box::new(connection));
+                },
+                BluetoothEvent::DsmError(err) => {
+                    return Err(DsmError::network(err, None::<std::io::Error>));
+                },
+                _ => {
+                    // Return an error for unhandled event types
+                    return Err(DsmError::network(
+                        "Unhandled Bluetooth event type",
+                        None::<std::io::Error>,
+                    ));
                 }
-                
-                // If we didn't get a connection event, try again
-                Err(DsmError::network("Received non-connection event", None::<std::io::Error>))
-            },
-            // If we timeout
-            _ = timeout => {
-                Err(DsmError::network("Timeout waiting for incoming Bluetooth connection", None::<std::io::Error>))
             }
+        } else {
+            // No event received (channel closed or timeout)
+            return Err(DsmError::network(
+                "No Bluetooth connection received or channel closed",
+                None::<std::io::Error>,
+            ));
         }
     }
+}
 
-    fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
-
-    async fn close(&self) -> Result<(), DsmError> {
-        // In a real implementation, this would stop the Bluetooth advertisement
-        // and close any resources associated with listening
-
-        Ok(())
-    }
-
-    fn transport_type(&self) -> TransportType {
-        TransportType::Bluetooth
+impl Clone for BluetoothListener {
+    fn clone(&self) -> Self {
+        // We can't use .await in a non-async function
+        // Instead, create a new mutex and channel
+        let (_, rx) = mpsc::channel(100);
+        
+        Self {
+            local_addr: self.local_addr,
+            connections: self.connections.clone(),
+            tx: self.tx.clone(),
+            rx: tokio::sync::Mutex::new(rx),
+        }
     }
 }
 

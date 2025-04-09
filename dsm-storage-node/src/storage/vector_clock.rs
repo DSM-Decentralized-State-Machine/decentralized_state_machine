@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::cmp::Ordering;
 
 /// Vector clock relation between two clocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,10 +78,10 @@ impl VectorClock {
         for (node_id, &self_counter) in &self.counters {
             let other_counter = other.get(node_id);
             
-            if self_counter > other_counter {
-                self_gt = true;
-            } else if self_counter < other_counter {
-                other_gt = true;
+            match self_counter.cmp(&other_counter) {
+                std::cmp::Ordering::Greater => self_gt = true,
+                std::cmp::Ordering::Less => other_gt = true,
+                std::cmp::Ordering::Equal => {}
             }
             
             // Early exit - concurrent detected
@@ -114,10 +113,7 @@ impl VectorClock {
     
     /// Check if this vector clock dominates another
     pub fn dominates(&self, other: &VectorClock) -> bool {
-        match self.compare(other) {
-            VectorClockRelation::After | VectorClockRelation::Equal => true,
-            _ => false,
-        }
+        matches!(self.compare(other), VectorClockRelation::After | VectorClockRelation::Equal)
     }
     
     /// Return a compact JSON representation of the clock

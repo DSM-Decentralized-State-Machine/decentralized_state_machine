@@ -93,7 +93,7 @@ impl StorageFactory {
         // Create epidemic storage configuration
         let epidemic_config = EpidemicStorageConfig {
             node_id: node_id.clone(),
-            node_info,
+            node_info: node_info.clone(),
             region: node_info.region.clone(),
             gossip_interval_ms: 5000, // 5 seconds
             anti_entropy_interval_ms: 60000, // 1 minute
@@ -121,7 +121,7 @@ impl StorageFactory {
         let storage = EpidemicStorage::new(epidemic_config, backing_storage)?;
         
         // Start the epidemic storage
-        storage.start().await?
+        storage.start().await?;
         
         Ok(Arc::new(storage))
     }

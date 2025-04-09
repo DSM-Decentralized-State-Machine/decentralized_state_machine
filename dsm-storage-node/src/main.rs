@@ -3,8 +3,8 @@ use dsm::initialize as init_dsm;
 use dsm_storage_node::{
     api::ApiServer,
     config::Config,
-    storage::{memory_storage::MemoryStorage, sql_storage::SqlStorage, StorageProvider, StorageFactory},
-    types::StorageNode,
+    storage::{StorageFactory, StorageProvider},
+    types::StorageNode
 };
 use std::sync::Arc;
 use tracing::{info, Level};
@@ -53,11 +53,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: format!("node-{}", node_id),
         region: config.storage.region.clone().unwrap_or_else(|| "default".to_string()),
         public_key: "default-key".to_string(), // Would be generated or loaded in production
-        endpoint: config.network.external_address.clone().unwrap_or_default(),
+        endpoint: config.network.external_address.clone().unwrap_or_else(|| "".to_string()),
+    };
+    
+    // Create storage config for the storage factory
+    let storage_config = dsm_storage_node::storage::StorageConfig {
+        database_path: config.storage.database_path.clone(),
+        default_ttl: config.storage.cleanup_interval.unwrap_or(3600),
+        enable_pruning: true,
+        pruning_interval: config.storage.cleanup_interval.unwrap_or(3600),
     };
     
     // Create storage factory
-    let storage_factory = StorageFactory::new(config.storage.clone());
+    let storage_factory = StorageFactory::new(storage_config);
     
     // Create storage engine based on command line arguments
     let storage_engine: Arc<dyn dsm_storage_node::storage::StorageEngine + Send + Sync> = match args.storage_type.as_str() {

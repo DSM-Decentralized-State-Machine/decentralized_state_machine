@@ -574,10 +574,10 @@ fn verify_entropy_evolution(
     entropy_data.extend_from_slice(&next_state_number.to_le_bytes());
     
     // Calculate expected entropy using BLAKE3
-    let expected_entropy = blake3::hash(&entropy_data).as_bytes();
+    let expected_entropy: Vec<u8> = blake3::hash(&entropy_data).as_bytes().to_vec();
     
     // Compare using constant-time comparison to prevent timing attacks
-    Ok(constant_time_eq(current_entropy, expected_entropy))
+    Ok(constant_time_eq(current_entropy, &expected_entropy))
 }
 
 /// Validate a relationship state transition
