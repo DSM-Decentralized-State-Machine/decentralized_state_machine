@@ -75,12 +75,12 @@ pub fn calculate_next_entropy_concurrent(
 ) -> blake3::Hash {
     // Use thread_local hasher from blake3 for better performance
     let mut hasher = blake3::Hasher::new();
-    
+
     // Update with the same values as the standard function
     hasher.update(current_entropy);
     hasher.update(operation_bytes);
     hasher.update(&next_state_number.to_le_bytes());
-    
+
     // Return the hash directly without converting to Vec
     hasher.finalize()
 }

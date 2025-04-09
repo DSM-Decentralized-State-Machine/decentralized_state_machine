@@ -515,7 +515,8 @@ impl TokenStateManager {
             };
 
         // Check basic policy compliance
-        let result: PolicyVerificationResult = verify_policy(&token_policy, operation, None, None, None);
+        let result: PolicyVerificationResult =
+            verify_policy(&token_policy, operation, None, None, None);
         match result {
             PolicyVerificationResult::Valid => Ok(()),
             PolicyVerificationResult::Invalid { message } => Err(DsmError::policy_violation(

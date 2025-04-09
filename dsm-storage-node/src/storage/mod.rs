@@ -13,12 +13,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 pub mod distributed_storage;
+pub mod epidemic_storage;
 pub mod memory_storage;
 pub mod pruning;
+pub mod small_world;
 pub mod sql_storage;
 pub mod vector_clock;
-pub mod small_world;
-pub mod epidemic_storage;
 
 /// Storage configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,19 +66,19 @@ impl StorageFactory {
     pub fn new(config: StorageConfig) -> Self {
         Self { config }
     }
-    
+
     /// Create a memory storage engine
     pub fn create_memory_storage(&self) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
         let memory_storage = memory_storage::MemoryStorage::new();
         Ok(Arc::new(memory_storage))
     }
-    
+
     /// Create a SQL storage engine
     pub fn create_sql_storage(&self) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
         let sql_storage = sql_storage::SqlStorage::new(&self.config.database_path)?;
         Ok(Arc::new(sql_storage))
     }
-    
+
     /// Create an epidemic storage engine with small-world topology
     pub async fn create_epidemic_storage(
         &self,
@@ -89,14 +89,14 @@ impl StorageFactory {
     ) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
         use epidemic_storage::{EpidemicStorage, EpidemicStorageConfig};
         use small_world::SmallWorldConfig;
-        
+
         // Create epidemic storage configuration
         let epidemic_config = EpidemicStorageConfig {
             node_id: node_id.clone(),
             node_info: node_info.clone(),
             region: node_info.region.clone(),
-            gossip_interval_ms: 5000, // 5 seconds
-            anti_entropy_interval_ms: 60000, // 1 minute
+            gossip_interval_ms: 5000,          // 5 seconds
+            anti_entropy_interval_ms: 60000,   // 1 minute
             topology_check_interval_ms: 30000, // 30 seconds
             max_concurrent_gossip: 10,
             max_entries_per_gossip: 100,
@@ -116,16 +116,16 @@ impl StorageFactory {
             enable_read_repair: true,
             pruning_interval_ms: 3600000, // 1 hour
         };
-        
+
         // Create the epidemic storage
         let storage = EpidemicStorage::new(epidemic_config, backing_storage)?;
-        
+
         // Start the epidemic storage
         storage.start().await?;
-        
+
         Ok(Arc::new(storage))
     }
-    
+
     /// Create a distributed storage engine
     pub fn create_distributed_storage(
         &self,
@@ -142,7 +142,7 @@ impl StorageFactory {
             replication_factor,
             max_hops,
         )?;
-        
+
         Ok(Arc::new(distributed_storage))
     }
 }

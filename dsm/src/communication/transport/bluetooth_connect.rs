@@ -121,24 +121,29 @@ impl BluetoothTransport {
                 let simulate_discovery = async {
                     // Wait a realistic time for discovery
                     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                    
+
                     // Simulate finding 1-3 devices
                     let device_count = rand::random::<u8>() % 3 + 1;
-                    
+
                     for i in 0..device_count {
                         // Create a simulated device address
-                        let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 0, 100 + i));
+                        let ip =
+                            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 0, 100 + i));
                         let port = 1000 + i as u16;
                         let addr = std::net::SocketAddr::new(ip, port);
-                        
+
                         // Notify about the discovered device
                         let _ = tx.send(BluetoothEvent::Connected(addr)).await;
-                        
+
                         // Simulate device information including service UUID verification
-                        log::info!("Discovered Bluetooth device with address {:?} offering service {}", addr, service_uuid);
+                        log::info!(
+                            "Discovered Bluetooth device with address {:?} offering service {}",
+                            addr,
+                            service_uuid
+                        );
                     }
                 };
-                
+
                 // Run the simulation
                 simulate_discovery.await;
             }
@@ -176,42 +181,52 @@ impl BluetoothTransport {
             let service_uuid = self.service_uuid.clone();
             async move {
                 // Log successful advertisement start
-                log::debug!("Bluetooth advertisement started for device '{}'", device_name);
-                
+                log::debug!(
+                    "Bluetooth advertisement started for device '{}'",
+                    device_name
+                );
+
                 // Simulate periodic advertisement events
                 let simulate_advertisement = async {
                     // Advertisement lasts until explicitly stopped
                     loop {
                         // Wait for a simulated discovery period
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        
+
                         // Simulate a potential connection request (1 in 5 chance)
                         if rand::random::<u8>() % 5 == 0 {
                             // Create a simulated connection address
                             let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(
-                                192, 168, rand::random::<u8>() % 255, rand::random::<u8>() % 255
+                                192,
+                                168,
+                                rand::random::<u8>() % 255,
+                                rand::random::<u8>() % 255,
                             ));
                             let port = 1000 + rand::random::<u16>() % 9000;
                             let addr = std::net::SocketAddr::new(ip, port);
-                            
+
                             // Notify about the new connection
                             log::info!(
                                 "Received connection request to '{}' with service {} from {:?}",
-                                device_name, service_uuid, addr
+                                device_name,
+                                service_uuid,
+                                addr
                             );
-                            
+
                             let _ = tx.send(BluetoothEvent::Connected(addr)).await;
-                            
+
                             // Simulate the connection being established
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                            
+
                             // Simulate some initial data exchange
                             let initial_data = vec![0x01, 0x02, 0x03, 0x04]; // Protocol handshake data
-                            let _ = tx.send(BluetoothEvent::DataReceived(addr, initial_data)).await;
+                            let _ = tx
+                                .send(BluetoothEvent::DataReceived(addr, initial_data))
+                                .await;
                         }
                     }
                 };
-                
+
                 // Run the simulation
                 simulate_advertisement.await;
             }
@@ -362,12 +377,18 @@ impl TransportConnection for BluetoothConnection {
         // 3. Perform integrity verification
         // 4. Return the verified data
 
-        log::debug!("Receiving data from Bluetooth connection with {:?}", self.remote_addr);
+        log::debug!(
+            "Receiving data from Bluetooth connection with {:?}",
+            self.remote_addr
+        );
 
         // Check if connection exists and is active
         let exists = {
             let conns = self.connections.lock().unwrap();
-            conns.get(&self.remote_addr).map(|state| state.is_connected).unwrap_or(false)
+            conns
+                .get(&self.remote_addr)
+                .map(|state| state.is_connected)
+                .unwrap_or(false)
         };
 
         if !exists {
@@ -383,33 +404,33 @@ impl TransportConnection for BluetoothConnection {
         // Create a simulated data packet that follows the DSM protocol structure
         // This is more realistic than just returning static bytes
         let mut data = Vec::with_capacity(64);
-        
+
         // Protocol header (4 bytes)
         data.extend_from_slice(&[0x44, 0x53, 0x4D, 0x50]); // "DSMP" header
-        
+
         // Message type (1 byte)
         data.push(0x01); // Simulated data packet type
-        
+
         // Message length (2 bytes)
         let payload_length: u16 = 16;
         data.extend_from_slice(&payload_length.to_le_bytes());
-        
+
         // Packet sequence number (2 bytes)
         let seq_num: u16 = rand::random::<u16>();
         data.extend_from_slice(&seq_num.to_le_bytes());
-        
+
         // Timestamp (8 bytes)
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         data.extend_from_slice(&timestamp.to_le_bytes());
-        
+
         // Payload (16 bytes)
         for _ in 0..payload_length {
             data.push(rand::random::<u8>());
         }
-        
+
         // CRC (4 bytes) - just a placeholder
         data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
 
@@ -453,8 +474,8 @@ impl Clone for BluetoothConnection {
             local_addr: self.local_addr,
             connections: self.connections.clone(),
             tx: self.tx.clone(),
+        }
     }
-}
 }
 /// Bluetooth listener for incoming connections
 #[cfg(feature = "bluetooth")]
@@ -511,20 +532,20 @@ impl TransportListener for BluetoothListener {
             match event {
                 BluetoothEvent::Connected(addr) => {
                     log::info!("Accepted incoming Bluetooth connection from {:?}", addr);
-                    
+
                     // Create a connection state
                     let conn_state = BluetoothConnectionState {
                         remote_addr: addr,
                         receive_buffer: Vec::new(),
                         is_connected: true,
                     };
-                    
+
                     // Store the connection
                     {
                         let mut conns = self.connections.lock().unwrap();
                         conns.insert(addr, conn_state);
                     }
-                    
+
                     // Create and return a connection
                     let connection = BluetoothConnection {
                         remote_addr: addr,
@@ -532,12 +553,12 @@ impl TransportListener for BluetoothListener {
                         connections: self.connections.clone(),
                         tx: self.tx.clone(),
                     };
-                    
+
                     return Ok(Box::new(connection));
-                },
+                }
                 BluetoothEvent::DsmError(err) => {
                     return Err(DsmError::network(err, None::<std::io::Error>));
-                },
+                }
                 _ => {
                     // Return an error for unhandled event types
                     return Err(DsmError::network(
@@ -561,7 +582,7 @@ impl Clone for BluetoothListener {
         // We can't use .await in a non-async function
         // Instead, create a new mutex and channel
         let (_, rx) = mpsc::channel(100);
-        
+
         Self {
             local_addr: self.local_addr,
             connections: self.connections.clone(),

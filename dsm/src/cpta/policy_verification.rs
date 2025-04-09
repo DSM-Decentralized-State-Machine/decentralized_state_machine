@@ -43,11 +43,17 @@ pub fn verify_policy(
                 match condition {
                     PolicyCondition::OperationRestriction { allowed_operations } => {
                         // If mint operations are not in the allowed operations, then minting is not allowed
-                        if !allowed_operations.iter().any(|op| matches!(op, Operation::Mint { .. })) {
+                        if !allowed_operations
+                            .iter()
+                            .any(|op| matches!(op, Operation::Mint { .. }))
+                        {
                             minting_allowed = false;
                         }
-                    },
-                    PolicyCondition::Custom { constraint_type, parameters } => {
+                    }
+                    PolicyCondition::Custom {
+                        constraint_type,
+                        parameters,
+                    } => {
                         // Look for custom constraints related to minting
                         if constraint_type == "max_mint" {
                             if let Some(max_value) = parameters.get("value") {
@@ -62,7 +68,7 @@ pub fn verify_policy(
                                 }
                             }
                         }
-                    },
+                    }
                     // Add other condition checks as needed
                     _ => {}
                 }
@@ -78,10 +84,7 @@ pub fn verify_policy(
             if let Some(max_mint) = max_mint_amount {
                 if amount.value() > max_mint {
                     return PolicyVerificationResult::Invalid {
-                        message: format!(
-                            "Mint amount exceeds policy limit of {}",
-                            max_mint
-                        ),
+                        message: format!("Mint amount exceeds policy limit of {}", max_mint),
                     };
                 }
             }
@@ -106,7 +109,7 @@ pub fn verify_policy(
 
             // All checks passed
             PolicyVerificationResult::Valid
-        },
+        }
         Operation::Transfer { amount, .. } => {
             // Check if there are any conditions that restrict transfers
             let mut transfer_allowed = true;
@@ -118,11 +121,17 @@ pub fn verify_policy(
                 match condition {
                     PolicyCondition::OperationRestriction { allowed_operations } => {
                         // If transfer operations are not in the allowed operations, then transfer is not allowed
-                        if !allowed_operations.iter().any(|op| matches!(op, Operation::Transfer { .. })) {
+                        if !allowed_operations
+                            .iter()
+                            .any(|op| matches!(op, Operation::Transfer { .. }))
+                        {
                             transfer_allowed = false;
                         }
-                    },
-                    PolicyCondition::Custom { constraint_type, parameters } => {
+                    }
+                    PolicyCondition::Custom {
+                        constraint_type,
+                        parameters,
+                    } => {
                         // Look for custom constraints related to transfers
                         if constraint_type == "max_transfer" {
                             if let Some(max_value) = parameters.get("value") {
@@ -132,10 +141,11 @@ pub fn verify_policy(
                             }
                         } else if constraint_type == "restricted_contexts" {
                             if let Some(contexts) = parameters.get("contexts") {
-                                restricted_contexts = contexts.split(',').map(|s| s.trim().to_string()).collect();
+                                restricted_contexts =
+                                    contexts.split(',').map(|s| s.trim().to_string()).collect();
                             }
                         }
-                    },
+                    }
                     // Add other condition checks as needed
                     _ => {}
                 }
@@ -170,7 +180,7 @@ pub fn verify_policy(
 
             // All checks passed
             PolicyVerificationResult::Valid
-        },
+        }
         Operation::Burn { amount, .. } => {
             // Check if there are any conditions that restrict burning
             let mut burning_allowed = true;
@@ -181,11 +191,17 @@ pub fn verify_policy(
                 match condition {
                     PolicyCondition::OperationRestriction { allowed_operations } => {
                         // If burn operations are not in the allowed operations, then burning is not allowed
-                        if !allowed_operations.iter().any(|op| matches!(op, Operation::Burn { .. })) {
+                        if !allowed_operations
+                            .iter()
+                            .any(|op| matches!(op, Operation::Burn { .. }))
+                        {
                             burning_allowed = false;
                         }
-                    },
-                    PolicyCondition::Custom { constraint_type, parameters } => {
+                    }
+                    PolicyCondition::Custom {
+                        constraint_type,
+                        parameters,
+                    } => {
                         // Look for custom constraints related to burns
                         if constraint_type == "max_burn" {
                             if let Some(max_value) = parameters.get("value") {
@@ -194,7 +210,7 @@ pub fn verify_policy(
                                 }
                             }
                         }
-                    },
+                    }
                     // Add other condition checks as needed
                     _ => {}
                 }
@@ -210,17 +226,14 @@ pub fn verify_policy(
             if let Some(max_burn) = max_burn_amount {
                 if amount.value() > max_burn {
                     return PolicyVerificationResult::Invalid {
-                        message: format!(
-                            "Burn amount exceeds policy limit of {}",
-                            max_burn
-                        ),
+                        message: format!("Burn amount exceeds policy limit of {}", max_burn),
                     };
                 }
             }
 
             // All checks passed
             PolicyVerificationResult::Valid
-        },
+        }
         _ => {
             // Operation doesn't require policy verification
             PolicyVerificationResult::Valid
@@ -244,7 +257,7 @@ pub fn verify_policy(
 pub fn verify_policy_anchor(policy_anchor: &PolicyAnchor) -> Result<bool, DsmError> {
     // In the current implementation, PolicyAnchor is just a wrapper around a 32-byte array
     // It doesn't have the fields we're trying to access
-    
+
     // Instead, let's perform a simpler verification that the anchor is not empty
     if policy_anchor.0.iter().all(|&b| b == 0) {
         return Err(DsmError::validation(

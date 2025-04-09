@@ -165,25 +165,26 @@ pub fn verify_transition_integrity_fixed(
             // Calculate hash commitment of the pre-commitment data
             let mut commitment_data = Vec::new();
             commitment_data.extend_from_slice(&current_state.prev_state_hash);
-            
+
             // Serialize the operation for the commitment
             if let Ok(op_bytes) = bincode::serialize(operation) {
                 commitment_data.extend_from_slice(&op_bytes);
                 commitment_data.extend_from_slice(&current_state.entropy);
-                
+
                 // Compute commitment hash
                 let commitment_hash = blake3::hash(&commitment_data);
-                
+
                 // Convert pre-commitment bytes to expected format
                 // For real implementation, this would involve proper deserialization and checking
                 // Here we just do a simple comparison to the hash as a simulation
-                let pre_commitment_bytes = bincode::serialize(pre_commitment)
-                    .map_err(|e| DsmError::serialization(
-                        "Failed to serialize pre-commitment for hash computation", 
-                        Some(e)
-                    ))?;
+                let pre_commitment_bytes = bincode::serialize(pre_commitment).map_err(|e| {
+                    DsmError::serialization(
+                        "Failed to serialize pre-commitment for hash computation",
+                        Some(e),
+                    )
+                })?;
                 let pre_commitment_hash = blake3::hash(&pre_commitment_bytes);
-                
+
                 // Ensure the commitment matches
                 if pre_commitment_hash.as_bytes() != commitment_hash.as_bytes() {
                     // The pre-commitment does not match the current operation and state
