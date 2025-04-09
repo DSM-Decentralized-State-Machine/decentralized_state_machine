@@ -1,0 +1,19 @@
+{
+  "network": {
+    "bootstrap_nodes": [],
+    "enable_p2p": false
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8421
+  },
+  "storage": {
+    "data_dir": "./data"
+  },
+  "unilateral": {
+    "max_transaction_size": 1048576
+  },
+  "vault": {
+    "auto_expire_check_interval": 3600
+  }
+}
