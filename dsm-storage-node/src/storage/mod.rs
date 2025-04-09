@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 pub mod distributed_storage;
 pub mod epidemic_storage;
+pub use epidemic_storage::{EpidemicStorage, EpidemicStorageConfig, RegionalConsistency, PartitionStrategy};
 pub mod memory_storage;
 pub mod pruning;
 pub mod small_world;

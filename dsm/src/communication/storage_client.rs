@@ -1298,7 +1298,7 @@ impl StorageNodeClient {
     /// Store a vault (not available without reqwest)
     pub async fn store_vault(
         &self,
-        _vault: &DeterministicLimboVault,
+        _vault: &LimboVault,
         _creator_signature: &[u8],
     ) -> Result<(), DsmError> {
         Err(DsmError::feature_not_available(
@@ -1311,7 +1311,7 @@ impl StorageNodeClient {
     pub async fn get_vault(
         &self,
         _vault_id: &str,
-    ) -> Result<Option<DeterministicLimboVault>, DsmError> {
+    ) -> Result<Option<LimboVault>, DsmError> {
         Err(DsmError::feature_not_available(
             "Network functionality requires the 'reqwest' feature",
             None::<String>,
