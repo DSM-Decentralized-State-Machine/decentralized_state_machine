@@ -86,6 +86,10 @@ All quantum-resistant primitives have been implemented with strict adherence to 
 
 When distributing DSM under commercial licenses, this compliance documentation must be included to satisfy attribution requirements for the underlying dependencies.
 
+## Provisional Patent Notice
+The Software *(or certain components thereof)* is the subject of a provisional patent application filed with the relevant patent office. Nothing in this License is intended to waive or grant any rights under any patents *(provisional or otherwise)* that the Licensor may hold or claim. Licensees or other parties seeking permissions beyond those expressly stated herein should contact the Licensor to inquire about available patent licenses.
+
+
 ## Contact Information
 
 For questions related to license compliance or commercial licensing, please contact:

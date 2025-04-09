@@ -36,7 +36,7 @@ pub struct BlindedStateEntry {
 }
 
 /// Storage node information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageNode {
     /// Node ID
     pub id: String,

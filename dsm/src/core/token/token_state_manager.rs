@@ -84,7 +84,7 @@ pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
 // Imports
 use crate::cpta::policy_verification::{PolicyVerificationResult, verify_policy};
 use crate::types::operations::{Ops, Operation};
-use crate::types::policy_types::{Policy, PolicyAnchor};
+use crate::types::policy_types::PolicyAnchor;
 
 impl TokenStateManager {
     /// Create a new TokenStateManager
@@ -514,14 +514,9 @@ impl TokenStateManager {
                 }
             };
 
-        // Convert PolicyFile to Policy for verification
-        let policy = Policy {
-            name: token_policy.file.name.clone(),
-            conditions: token_policy.file.conditions.clone(),
-        };
-
         // Check basic policy compliance
-        let result: PolicyVerificationResult = verify_policy(&policy, operation, None, None, None);
+        let result: PolicyVerificationResult =
+            verify_policy(&token_policy, operation, None, None, None);
         match result {
             PolicyVerificationResult::Valid => Ok(()),
             PolicyVerificationResult::Invalid { message } => Err(DsmError::policy_violation(

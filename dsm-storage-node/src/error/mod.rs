@@ -17,6 +17,18 @@ pub type Result<T> = result::Result<T, StorageNodeError>;
 /// Error type for DSM Storage Node operations
 #[derive(Debug, Error)]
 pub enum StorageNodeError {
+    /// Timeout error
+    #[error("Operation timed out")]
+    Timeout,
+
+    /// Internal error
+    #[error("Internal error")]
+    Internal,
+
+    /// Configuration error
+    #[error("Configuration error")]
+    Configuration,
+
     /// Resource not found
     #[error("Not found: {0}")]
     NotFound(String),
@@ -90,6 +102,9 @@ pub enum StorageNodeError {
 impl IntoResponse for StorageNodeError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
+            StorageNodeError::Timeout => (StatusCode::REQUEST_TIMEOUT, "Operation timed out".to_string()),
+            StorageNodeError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
+            StorageNodeError::Configuration => (StatusCode::INTERNAL_SERVER_ERROR, "Configuration error".to_string()),
             StorageNodeError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             StorageNodeError::InvalidState(msg) => (StatusCode::BAD_REQUEST, msg),
             StorageNodeError::Authentication(msg) => (StatusCode::UNAUTHORIZED, msg),

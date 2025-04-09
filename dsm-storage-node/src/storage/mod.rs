@@ -13,9 +13,13 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 pub mod distributed_storage;
+pub mod epidemic_storage;
+pub use epidemic_storage::{EpidemicStorage, EpidemicStorageConfig, RegionalConsistency, PartitionStrategy};
 pub mod memory_storage;
 pub mod pruning;
+pub mod small_world;
 pub mod sql_storage;
+pub mod vector_clock;
 
 /// Storage configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -50,6 +54,98 @@ pub trait StorageEngine: Send + Sync {
 
     /// Get storage statistics
     async fn get_stats(&self) -> Result<StorageStats>;
+}
+
+/// Storage factory for creating different storage engine implementations
+pub struct StorageFactory {
+    /// Configuration for the storage node
+    config: StorageConfig,
+}
+
+impl StorageFactory {
+    /// Create a new storage factory with the given configuration
+    pub fn new(config: StorageConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create a memory storage engine
+    pub fn create_memory_storage(&self) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
+        let memory_storage = memory_storage::MemoryStorage::new();
+        Ok(Arc::new(memory_storage))
+    }
+
+    /// Create a SQL storage engine
+    pub fn create_sql_storage(&self) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
+        let sql_storage = sql_storage::SqlStorage::new(&self.config.database_path)?;
+        Ok(Arc::new(sql_storage))
+    }
+
+    /// Create an epidemic storage engine with small-world topology
+    pub async fn create_epidemic_storage(
+        &self,
+        node_id: String,
+        node_info: crate::types::StorageNode,
+        bootstrap_nodes: Vec<crate::types::StorageNode>,
+        backing_storage: Option<Arc<dyn StorageEngine + Send + Sync>>,
+    ) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
+        use epidemic_storage::{EpidemicStorage, EpidemicStorageConfig};
+        use small_world::SmallWorldConfig;
+
+        // Create epidemic storage configuration
+        let epidemic_config = EpidemicStorageConfig {
+            node_id: node_id.clone(),
+            node_info: node_info.clone(),
+            region: node_info.region.clone(),
+            gossip_interval_ms: 5000,          // 5 seconds
+            anti_entropy_interval_ms: 60000,   // 1 minute
+            topology_check_interval_ms: 30000, // 30 seconds
+            max_concurrent_gossip: 10,
+            max_entries_per_gossip: 100,
+            max_entries_per_response: 50,
+            gossip_fanout: 3,
+            gossip_ttl: 3,
+            bootstrap_nodes,
+            topology_config: SmallWorldConfig {
+                max_bucket_size: 8,
+                max_immediate_neighbors: 16,
+                max_long_links: 16,
+            },
+            partition_strategy: epidemic_storage::PartitionStrategy::KeyHash,
+            regional_consistency: epidemic_storage::RegionalConsistency::EventualCrossRegion,
+            max_storage_entries: 100000, // 100k entries by default
+            min_verification_count: 2,
+            enable_read_repair: true,
+            pruning_interval_ms: 3600000, // 1 hour
+        };
+
+        // Create the epidemic storage
+        let storage = EpidemicStorage::new(epidemic_config, backing_storage)?;
+
+        // Start the epidemic storage
+        storage.start().await?;
+
+        Ok(Arc::new(storage))
+    }
+
+    /// Create a distributed storage engine
+    pub fn create_distributed_storage(
+        &self,
+        local_storage: Arc<dyn StorageEngine + Send + Sync>,
+        node_id: String,
+        storage_nodes: Vec<crate::types::StorageNode>,
+        replication_factor: usize,
+        max_hops: usize,
+    ) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
+        let distributed_storage = distributed_storage::DistributedStorage::new(
+            local_storage,
+            node_id,
+            storage_nodes,
+            replication_factor,
+            max_hops,
+        )?;
+
+        Ok(Arc::new(distributed_storage))
+    }
 }
 
 /// Storage provider for the storage node

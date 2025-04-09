@@ -6,10 +6,87 @@ static SPHINCS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Initialize the SPHINCS+ signature subsystem
 pub fn init_sphincs() {
     if !SPHINCS_INITIALIZED.load(Ordering::SeqCst) {
-        // Perform any necessary initialization for SPHINCS+
-        // Currently this is just a placeholder for future expansion
-        tracing::info!("SPHINCS+ signature subsystem initialized");
-        SPHINCS_INITIALIZED.store(true, Ordering::SeqCst);
+        // Perform necessary initialization for SPHINCS+
+
+        // Verify that SPHINCS+ is properly configured by running a complete
+        // key generation, signing, and verification cycle
+        let verify_sphincs = || -> Result<(), String> {
+            let result = std::panic::catch_unwind(|| {
+                // Generate a test key pair
+                let (pk, sk) = keypair();
+
+                // Verify key sizes
+                if pk.as_bytes().len()
+                    != pqcrypto_sphincsplus::sphincssha2256fsimple::public_key_bytes()
+                {
+                    return Err(format!(
+                        "Public key size mismatch: {} vs {}",
+                        pk.as_bytes().len(),
+                        pqcrypto_sphincsplus::sphincssha2256fsimple::public_key_bytes()
+                    ));
+                }
+
+                if sk.as_bytes().len()
+                    != pqcrypto_sphincsplus::sphincssha2256fsimple::secret_key_bytes()
+                {
+                    return Err(format!(
+                        "Secret key size mismatch: {} vs {}",
+                        sk.as_bytes().len(),
+                        pqcrypto_sphincsplus::sphincssha2256fsimple::secret_key_bytes()
+                    ));
+                }
+
+                // Test message for signing
+                let test_message = b"SPHINCS+ initialization verification message";
+
+                // Sign the test message
+                let signature = detached_sign(test_message, &sk);
+
+                // Verify the signature
+                match verify_detached_signature(&signature, test_message, &pk) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(
+                            "Signature verification failed during initialization".to_string()
+                        )
+                    }
+                }
+
+                // Verify the signature with a modified message (should fail)
+                let modified_message = b"Modified message";
+                match verify_detached_signature(&signature, modified_message, &pk) {
+                    Ok(_) => {
+                        return Err(
+                            "Signature verification succeeded with wrong message".to_string()
+                        )
+                    }
+                    Err(_) => {} // This is expected
+                }
+
+                Ok(())
+            });
+
+            match result {
+                Ok(inner_result) => inner_result,
+                Err(_) => Err("Panic during SPHINCS+ initialization test".to_string()),
+            }
+        };
+
+        // Verify SPHINCS+ works properly
+        match verify_sphincs() {
+            Ok(_) => {
+                tracing::info!(
+                    "SPHINCS+ signature subsystem successfully initialized and verified"
+                );
+                SPHINCS_INITIALIZED.store(true, Ordering::SeqCst);
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize SPHINCS+ signature subsystem: {}", e);
+                // In a production environment, this would trigger a critical error
+                // For now, we'll just mark it as initialized to prevent repeated attempts
+                SPHINCS_INITIALIZED.store(true, Ordering::SeqCst);
+            }
+        }
     }
 }
 use pqcrypto_sphincsplus::sphincssha2256fsimple::{

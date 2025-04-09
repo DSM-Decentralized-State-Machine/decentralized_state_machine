@@ -17,24 +17,118 @@ use serde::{Deserialize, Serialize};
 // Add helper functions for state transitions and hashing
 fn derive_next_state(
     previous_state: &State,
-    _transaction: &crate::types::operations::Operation,
-    _signature: &[u8],
+    transaction: &crate::types::operations::Operation,
+    signature: &[u8],
 ) -> Result<State, DsmError> {
-    // This is a placeholder implementation. Replace with proper logic.
+    // Proper implementation based on the DSM whitepaper Section 3.1
     let mut new_state = previous_state.clone();
+    
+    // Increment state number
     new_state.state_number += 1;
-    // Set previous state hash
+    
+    // Set previous state hash for hash chain continuity
     new_state.prev_state_hash = hash_state(previous_state)?.to_vec();
+    
+    // Generate deterministic entropy for the next state according to whitepaper equation:
+    // e(n+1) = H(e(n) || op(n+1) || (n+1))
+    let next_state_number = new_state.state_number;
+    let op_bytes = bincode::serialize(transaction).map_err(|e| 
+        DsmError::Serialization {
+            context: "Failed to serialize operation for entropy derivation".into(),
+            source: Some(Box::new(e)),
+        }
+    )?;
+    
+    // Create entropy data
+    let mut entropy_data = Vec::new();
+    entropy_data.extend_from_slice(&previous_state.entropy);
+    entropy_data.extend_from_slice(&op_bytes);
+    entropy_data.extend_from_slice(&next_state_number.to_le_bytes());
+    
+    // Derive new entropy using BLAKE3
+    let new_entropy = blake3::hash(&entropy_data).as_bytes().to_vec();
+    new_state.entropy = new_entropy;
+    
+    // Add the operation to the new state
+    new_state.operation = transaction.clone();
+    
+    // Add signature for verification
+    if !signature.is_empty() {
+        new_state.signature = Some(signature.to_vec());
+    }
+    
+    // Update the state hash with the new values
+    let new_hash = hash_state(&new_state)?;
+    new_state.hash = new_hash.to_vec();
+    
     Ok(new_state)
 }
 
+// Generate entropy for transaction according to whitepaper Section 15.1
+fn generate_entropy_for_transaction(
+    current_state: &State,
+    operation: &Transaction
+) -> Result<Vec<u8>, DsmError> {
+    // Implement the deterministic entropy evolution equation: en+1 = H(en ∥ opn+1 ∥ (n+1))
+    let next_state_number = current_state.state_number + 1;
+    
+    // Serialize the operation
+    let op_bytes = bincode::serialize(operation).map_err(|e| 
+        DsmError::Serialization {
+            context: "Failed to serialize operation for entropy derivation".into(),
+            source: Some(Box::new(e)),
+        }
+    )?;
+    
+    // Create entropy data
+    let mut entropy_data = Vec::new();
+    entropy_data.extend_from_slice(&current_state.entropy);
+    entropy_data.extend_from_slice(&op_bytes);
+    entropy_data.extend_from_slice(&next_state_number.to_le_bytes());
+    
+    // Derive new entropy using BLAKE3
+    Ok(blake3::hash(&entropy_data).as_bytes().to_vec())
+}
+
 fn hash_state(state: &State) -> Result<[u8; 32], DsmError> {
-    // This is a placeholder implementation. Replace with proper logic.
-    let serialized = bincode::serialize(state).map_err(|e| DsmError::Serialization {
-        context: "Failed to serialize state for hashing".into(),
+    // Proper implementation based on the DSM whitepaper
+    // This function implements the hash chaininging described in Section 3.1
+    // It creates a deterministic hash of the state for continuity verification
+    
+    // Create a canonical representation of the state for hashing
+    // Only include the essential parts of the state that affect its identity
+    let mut hash_components = Vec::new();
+    
+    // Add state number
+    hash_components.extend_from_slice(&state.state_number.to_le_bytes());
+    
+    // Add entropy
+    hash_components.extend_from_slice(&state.entropy);
+    
+    // Add prev_state_hash
+    hash_components.extend_from_slice(&state.prev_state_hash);
+    
+    // Serialize and add operation
+    let op_bytes = bincode::serialize(&state.operation).map_err(|e| DsmError::Serialization {
+        context: "Failed to serialize operation for state hashing".into(),
         source: Some(Box::new(e)),
     })?;
-    Ok(blake3::hash(&serialized).into())
+    hash_components.extend_from_slice(&op_bytes);
+    
+    // Add device info
+    hash_components.extend_from_slice(state.device_info.device_id.as_bytes());
+    
+    // If available, add token balances
+    if !state.token_balances.is_empty() {
+        let token_bytes = bincode::serialize(&state.token_balances).map_err(|e| DsmError::Serialization {
+            context: "Failed to serialize token balances for state hashing".into(),
+            source: Some(Box::new(e)),
+        })?;
+        hash_components.extend_from_slice(&token_bytes);
+    }
+    
+    // Compute the hash using BLAKE3
+    Ok(blake3::hash(&hash_components).into())
 }
 
 // Define type aliases for clarity (following whitepaper terminology)
@@ -163,7 +257,7 @@ impl InboxManager {
             transaction: transaction.clone(),
             signature: signature.clone(),
             operation: transaction.clone(),
-            new_entropy: Some(vec![]), // Empty vector as placeholder
+            new_entropy: Some(generate_entropy_for_transaction(sender_state, &transaction.clone())?),
             encapsulated_entropy: None,
             device_id: sender_state.device_info.device_id.clone(),
             timestamp: std::time::SystemTime::now()
@@ -414,7 +508,7 @@ impl InboxManager {
             transaction: entry.transaction.clone(),
             signature: entry.signature.clone(),
             operation: entry.transaction.clone(),
-            new_entropy: Some(vec![]),
+            new_entropy: Some(generate_entropy_for_transaction(current_state, &entry.transaction.clone())?),
             encapsulated_entropy: None,
             device_id: current_state.device_info.device_id.clone(),
             timestamp: entry.timestamp,

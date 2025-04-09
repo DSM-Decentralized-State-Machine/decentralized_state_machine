@@ -55,6 +55,9 @@ impl IntoResponse for ApiError {
 impl From<StorageNodeError> for ApiError {
     fn from(err: StorageNodeError) -> Self {
         let (code, message) = match err {
+            StorageNodeError::Timeout => ("TIMEOUT", "Operation timed out".to_string()),
+            StorageNodeError::Internal => ("INTERNAL_ERROR", "Internal server error".to_string()),
+            StorageNodeError::Configuration => ("CONFIGURATION_ERROR", "Configuration error".to_string()),
             StorageNodeError::NotFound(msg) => ("NOT_FOUND", msg),
             StorageNodeError::Storage(msg) => ("STORAGE_ERROR", msg),
             StorageNodeError::Config(msg) => ("CONFIG_ERROR", msg),
