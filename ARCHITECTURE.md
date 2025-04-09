@@ -50,3 +50,6 @@ Key objectives:
 ## Data Flow
 
 The following diagram outlines the typical data flow in DSM:
+
+![DSM Data Flow](./dsm-data-flow.png)
+
