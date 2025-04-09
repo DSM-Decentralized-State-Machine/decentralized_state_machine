@@ -1,4 +1,8 @@
-# Getting Started with DSM
+# Decentralized State Machine (DSM) v0.1.0-alpha.1
+
+> **ALPHA RELEASE**: This is an alpha release intended for developer preview and testing. Not for production use.
+
+A quantum-resistant decentralized state machine implementation with cryptographic verification and bilateral state isolation.
 
 This guide will help you set up and run the Decentralized State Machine (DSM) project. For more comprehensive documentation, visit the [DSM Developer Documentation](https://decentralizedstatemachine.com/devdocs/index.html).
 
@@ -174,6 +178,42 @@ See the `.env.template` file for available options.
 - Explore the [examples](examples/) directory
 - Run the [test suite](tests/) to verify your setup
 
+## Release Information
+
+### Alpha Status
+
+This v0.1.0-alpha.1 release includes the following limitations:
+
+- **API Stability**: The API is not yet stable and may change in future releases
+- **Security**: The implementation has undergone internal review but not external audit
+- **Performance**: Not yet optimized for production workloads
+- **Documentation**: Some components lack comprehensive documentation
+
+### Release Goals
+
+This alpha release is intended to:
+
+1. Gather feedback from the developer community
+2. Validate the core architecture and API design
+3. Identify integration challenges in real-world scenarios
+4. Build a community of early adopters and contributors
+
+### What's Working
+
+- Core state machine with deterministic transitions
+- Quantum-resistant cryptographic primitives
+- Bilateral state isolation
+- Basic token operations
+- Storage node replication
+- SDK for application development
+
+### Known Issues
+
+- Some tests are marked as `#[ignore]` due to implementation details
+- Error handling could be more consistent in some modules
+- Performance optimization is still in progress
+- Limited platform testing (primarily Linux and macOS)
+
 ## Troubleshooting
 
 ### Common Issues
@@ -192,3 +232,15 @@ See the `.env.template` file for available options.
 - For help or commercial inquiries, email [info@decentralizedstatemachine.com](mailto:info@decentralizedstatemachine.com)
 - Join our [Developer Telegram](https://t.me/+agb3_DHBcCI5MTkx) for development support and questions
 - Follow us on [X/Twitter](https://x.com/state_machine_)
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for information about the security model and vulnerability reporting process.
+
+## License
+
+This project is licensed under either of
+- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.

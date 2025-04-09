@@ -1,4 +1,4 @@
-name: Release
+name: Create Release
 
 on:
   push:
@@ -6,92 +6,121 @@ on:
       - 'v*'
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
+  build-and-release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_prefix: dsm-linux
+          - os: macos-latest
+            artifact_prefix: dsm-macos
+
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Create GitHub Release
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config librocksdb-dev clang cmake
+
+      - name: Install system dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install openssl rocksdb cmake
+
+      - name: Build Release
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-features
+        env:
+          RUSTFLAGS: "-C target-cpu=native -C opt-level=3"
+
+      - name: Get Release Version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/v}
+        shell: bash
+
+      - name: Package Release
+        run: |
+          mkdir -p release-package/dsm-${{ steps.get_version.outputs.VERSION }}
+          cp target/release/server release-package/dsm-${{ steps.get_version.outputs.VERSION }}/dsm-server
+          cp target/release/cli release-package/dsm-${{ steps.get_version.outputs.VERSION }}/dsm-cli
+          cp README.md CHANGELOG.md LICENSE.md SECURITY.md INSTALL.md release-package/dsm-${{ steps.get_version.outputs.VERSION }}/
+          cp .env.template release-package/dsm-${{ steps.get_version.outputs.VERSION }}/dsm.env.template
+          cp -r examples release-package/dsm-${{ steps.get_version.outputs.VERSION }}/
+          cd release-package
+          tar -czvf ${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.tar.gz dsm-${{ steps.get_version.outputs.VERSION }}
+          shasum -a 256 ${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.tar.gz > ${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.sha256
+        shell: bash
+
+      - name: Create Release
         id: create_release
         uses: actions/create-release@v1
+        if: matrix.os == 'ubuntu-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: DSM ${{ github.ref }}
+          release_name: DSM ${{ steps.get_version.outputs.VERSION }}
+          body_path: ./CHANGELOG.md
           draft: false
-          prerelease: false
-          
-  build-release:
-    name: Build Release Artifacts
-    needs: create-release
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: linux-x86_64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: macos-x86_64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: macos-arm64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            name: windows-x86_64
-    
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: ${{ matrix.target }}
-          
-      - name: Build release binary
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --target ${{ matrix.target }}
-          
-      - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czvf ../../../dsm-${{ matrix.name }}.tar.gz dsm dsm-storage-node
-          cd -
-          
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../dsm-${{ matrix.name }}.zip dsm.exe dsm-storage-node.exe
-          cd -
-          
-      - name: Upload Release Asset (Unix)
-        if: matrix.os != 'windows-latest'
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+
+      - name: Upload Release Assets
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dsm-${{ matrix.name }}.tar.gz
-          asset_name: dsm-${{ matrix.name }}.tar.gz
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release-package/${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_name: ${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.tar.gz
           asset_content_type: application/gzip
-          
-      - name: Upload Release Asset (Windows)
-        if: matrix.os == 'windows-latest'
+
+      - name: Upload Checksums
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dsm-${{ matrix.name }}.zip
-          asset_name: dsm-${{ matrix.name }}.zip
-          asset_content_type: application/zip
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release-package/${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.sha256
+          asset_name: ${{ matrix.artifact_prefix }}-${{ steps.get_version.outputs.VERSION }}.sha256
+          asset_content_type: text/plain
+
+  build-docs:
+    name: Build and Publish Docs
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install mdBook
+        run: |
+          mkdir -p $HOME/.cargo/bin
+          curl -L https://github.com/rust-lang/mdBook/releases/download/v0.4.18/mdbook-v0.4.18-x86_64-unknown-linux-gnu.tar.gz | tar xz -C $HOME/.cargo/bin
+
+      - name: Build Documentation
+        run: |
+          cd docs
+          $HOME/.cargo/bin/mdbook build
+
+      - name: Deploy Documentation
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/book

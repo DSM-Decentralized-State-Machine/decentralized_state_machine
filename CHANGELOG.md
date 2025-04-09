@@ -1,5 +1,32 @@
 # Changelog
 
+All notable changes to the Decentralized State Machine (DSM) project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0-alpha.1] - 2025-04-09
+
+### Added
+- Initial alpha release of the DSM core state machine with quantum-resistant cryptography
+- SPHINCS+ signature scheme implementation for post-quantum security
+- Kyber key encapsulation mechanism for secure key exchange
+- Deterministic state transitions with hash chain verification
+- Bilateral state isolation for secure multi-party state management
+- Pre-commitment verification for transaction integrity
+- Random walk verification scheme
+- Storage node implementation with basic replication
+- SDK with high-level abstractions for application development
+- CLI tools for state management and verification
+- Core token operations (mint, transfer) with balance tracking
+- Comprehensive test suite for core functionality
+
+### Security Notes
+- This is an alpha release and should not be used in production environments
+- The cryptographic implementations have undergone internal review but not external audit
+- See SECURITY.md for vulnerability reporting procedures
+# Changelog
+
 All notable changes to the DSM project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

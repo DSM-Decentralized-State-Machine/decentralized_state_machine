@@ -7,6 +7,13 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0-alpha.1"
+authors = ["DSM Development Team"]
+edition = "2021"
+repository = "https://github.com/dsm-project/decentralized-state-machine"
+license = "MIT OR Apache-2.0"
+
 [profile.dev]
 overflow-checks = true
 opt-level = 0
