@@ -85,6 +85,8 @@ pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
 use crate::cpta::policy_verification::{PolicyVerificationResult, verify_policy};
 use crate::types::operations::{Ops, Operation};
 use crate::types::policy_types::PolicyAnchor;
+use pqcrypto_traits::sign::{PublicKey as _, DetachedSignature as _};
+use subtle::ConstantTimeEq;
 
 impl TokenStateManager {
     /// Create a new TokenStateManager
@@ -331,6 +333,7 @@ impl TokenStateManager {
             _ => {}
         }
 
+        self.update_balance_cache(&new_balances)?;
         Ok(new_balances)
     }
 
@@ -675,5 +678,171 @@ impl TokenStateManager {
         let transfer =
             Self::create_token_transfer(sender_state, recipient_state, amount, token_id)?;
         Ok(transfer.with_stores(token_store, balance_cache))
+    }
+
+    /// Optimize balance cache with LRU eviction and bulk loading  
+    pub fn optimize_balance_cache(&self) -> Result<(), DsmError> {
+        let mut cache = self.balance_cache.write();
+        
+        // Set maximum cache size (configurable)
+        const MAX_CACHE_SIZE: usize = 10_000;
+        
+        // Evict oldest entries if cache exceeds max size
+        if cache.len() > MAX_CACHE_SIZE {
+            // Sort entries by key (which contains timestamp information)
+            let mut entries: Vec<_> = cache.iter().collect();
+            entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+            
+            // Calculate how many entries to skip
+            let entries_len = entries.len();
+            let to_skip = entries_len.saturating_sub(MAX_CACHE_SIZE);
+            
+            // Keep only the newest MAX_CACHE_SIZE entries
+            let entries_to_keep: HashMap<_, _> = entries
+                .into_iter()
+                .skip(to_skip)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            
+            // Replace cache contents with kept entries
+            *cache = entries_to_keep;
+        }
+        
+        Ok(())
+    }
+
+    /// Bulk load balances into cache
+    pub fn bulk_load_balances(&self, balances: HashMap<String, Balance>) -> Result<(), DsmError> {
+        let mut cache = self.balance_cache.write();
+        cache.extend(balances);
+        self.optimize_balance_cache()?;
+        Ok(())
+    }
+
+    /// Update balance cache with atomic operation results
+    fn update_balance_cache(&self, new_balances: &HashMap<String, Balance>) -> Result<(), DsmError> {
+        let mut cache = self.balance_cache.write();
+        for (key, balance) in new_balances {
+            cache.insert(key.clone(), balance.clone());
+        }
+        self.optimize_balance_cache()?;
+        Ok(())
+    }
+
+    /// Validate forward commitment chain integrity
+    pub fn validate_commitment_chain(&self, states: &[State]) -> Result<bool, DsmError> {
+        // Verify each consecutive pair of states maintains commitment chain
+        for window in states.windows(2) {
+            let current = &window[0];
+            let next = &window[1];
+
+            // Skip if no forward commitment exists
+            if let Some(commitment) = &current.forward_commitment {
+                // Verify state number requirements
+                if next.state_number < commitment.min_state_number {
+                    return Ok(false);
+                }
+
+                // Verify operation parameters match commitment
+                if !self.verify_precommitment_parameters(commitment, &next.operation)? {
+                    return Ok(false);
+                }
+
+                // Verify the commitment hash matches
+                let expected_hash = self.compute_commitment_hash(commitment)?;
+                if !bool::from(expected_hash.as_slice().ct_eq(&commitment.hash)) {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Verify a single forward commitment transition
+    #[allow(dead_code)]
+    fn verify_forward_commitment_transition(
+        &self,
+        commitment: &crate::types::state_types::PreCommitment,
+        next_state: &State
+    ) -> Result<bool, DsmError> {
+        // Verify basic operation adherence
+        if !self.verify_precommitment_parameters(commitment, &next_state.operation)? {
+            return Ok(false);
+        }
+
+        // Verify commitment signatures if present
+        if let Some(entity_sig) = &commitment.entity_signature {
+            let entity_pk = &next_state.device_info.public_key;
+            if !self.verify_commitment_signature(entity_sig, entity_pk, &commitment.hash)? {
+                return Ok(false);
+            }
+        }
+
+        // Verify state number meets requirements
+        if next_state.state_number < commitment.min_state_number {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    /// Verify a commitment signature
+    #[allow(dead_code)]
+    fn verify_commitment_signature(
+        &self,
+        signature: &[u8],
+        public_key: &[u8],
+        message: &[u8]
+    ) -> Result<bool, DsmError> {
+        use pqcrypto_sphincsplus::sphincssha2256fsimple::{
+            PublicKey, DetachedSignature, verify_detached_signature
+        };
+
+        // Convert public key bytes to SPHINCS+ public key
+        let pk = PublicKey::from_bytes(public_key)
+            .map_err(|_| DsmError::InvalidPublicKey)?;
+
+        // Convert signature bytes to SPHINCS+ signature 
+        let sig = DetachedSignature::from_bytes(signature)
+            .map_err(|_| DsmError::crypto("Invalid signature format".to_string(), None::<std::io::Error>))?;
+
+        // Verify signature using SPHINCS+
+        Ok(verify_detached_signature(&sig, message, &pk).is_ok())
+    }
+
+    /// Helper function for constant-time equality comparison using subtle crate
+    #[allow(dead_code)]
+    fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+        bool::from(a.ct_eq(b))
+    }
+
+    /// Compute commitment hash for verification
+    fn compute_commitment_hash(&self, commitment: &crate::types::state_types::PreCommitment) -> Result<Vec<u8>, DsmError> {
+        // Sort parameters for deterministic ordering
+        let mut sorted_fixed: Vec<_> = commitment.fixed_parameters.iter().collect();
+        sorted_fixed.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+        let mut sorted_var: Vec<_> = commitment.variable_parameters.iter().collect();
+        sorted_var.sort();
+
+        // Construct commitment data
+        let mut data = Vec::new();
+        
+        // Add state hash
+        data.extend_from_slice(&commitment.hash);
+
+        // Add fixed parameters in sorted order 
+        for (key, value) in sorted_fixed {
+            data.extend_from_slice(key.as_bytes());
+            data.extend_from_slice(value);
+        }
+
+        // Add variable parameters in sorted order
+        for param in sorted_var {
+            data.extend_from_slice(param.as_bytes());
+        }
+
+        // Return BLAKE3 hash
+        Ok(blake3::hash(&data).as_bytes().to_vec())
     }
 }
