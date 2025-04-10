@@ -889,7 +889,6 @@ impl TokenManager for TokenSDK<IdentitySDK> {
         let root_token = self.root_token.read();
 
         // Conservation property: sum of all balances equals circulating supply
-        // Conservation property: sum of all balances equals circulating supply
         let supply_conservation = total_root_balance == root_token.circulating_supply.value();
 
         // Conservation property: circulating supply is less than or equal to total supply
