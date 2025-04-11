@@ -5,10 +5,9 @@
 // even under concurrent modifications and network partitions.
 
 use crate::error::{Result, StorageNodeError};
-use crate::storage::small_world::{NodeId, calculate_key_hash};
+
 use crate::storage::vector_clock::{VectorClock, VectorClockRelation};
-use crate::storage::epidemic_storage::EpidemicEntry;
-use crate::types::BlindedStateEntry;
+
 
 use dashmap::DashMap;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -1029,8 +1028,13 @@ mod tests {
         target.entry.metadata.insert("change".to_string(), "updated".to_string());
         source.entry.metadata.insert("change".to_string(), "original".to_string());
         
-        // Calculate delta operations
-        let delta_ops = engine.calculate_delta_operations(&source, &target);
-        
-        // Verify operations
-        assert!(delta_ops.contains(&DeltaOperation::SetValue(
+                // Calculate delta operations
+                let delta_ops = engine.calculate_delta_operations(&source, &target);
+                
+                // Verify operations
+                assert!(delta_ops.contains(&DeltaOperation::SetValue(vec![4, 5, 6])));
+                assert!(delta_ops.contains(&DeltaOperation::DeleteMetadata("remove".to_string())));
+                assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("add".to_string(), "new".to_string())));
+                assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("change".to_string(), "updated".to_string())));
+            }
+        }

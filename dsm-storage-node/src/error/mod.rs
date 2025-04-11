@@ -16,6 +16,7 @@ pub type Result<T> = result::Result<T, StorageNodeError>;
 
 /// Error type for DSM Storage Node operations
 #[derive(Debug, Error)]
+#[derive(Clone)]
 pub enum StorageNodeError {
     /// Timeout error
     #[error("Operation timed out")]
@@ -79,11 +80,11 @@ pub enum StorageNodeError {
 
     /// IO errors
     #[error("IO error: {0}")]
-    IO(#[from] io::Error),
+    IO(String),
 
     /// JSON errors
     #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(String),
 
     /// SQLite errors
     #[error("SQLite error: {0}")]
@@ -96,6 +97,26 @@ pub enum StorageNodeError {
     /// Unknown errors
     #[error("Unknown error: {0}")]
     Unknown(String),
+
+    /// Rate limit exceeded
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+
+    /// Task cancelled
+    #[error("Task cancelled: {0}")]
+    TaskCancelled(String),
+
+    /// Task failed
+    #[error("Task failed: {0}")]
+    TaskFailed(String),
+
+    /// Queue full
+    #[error("Queue full: {0}")]
+    QueueFull(String),
+
+    /// Receive failure
+    #[error("Receive failure: {0}")]
+    ReceiveFailure(String),
 }
 
 /// Implement IntoResponse for StorageNodeError so it can be returned directly from handlers
@@ -116,12 +137,17 @@ impl IntoResponse for StorageNodeError {
             StorageNodeError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             StorageNodeError::Database(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             StorageNodeError::Serialization(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            StorageNodeError::IO(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-            StorageNodeError::Json(err) => (StatusCode::BAD_REQUEST, err.to_string()),
+            StorageNodeError::IO(err) => (StatusCode::INTERNAL_SERVER_ERROR, err),
+            StorageNodeError::Json(err) => (StatusCode::BAD_REQUEST, err),
             StorageNodeError::Sqlite(err) => (StatusCode::INTERNAL_SERVER_ERROR, err),
             StorageNodeError::Request(err) => (StatusCode::BAD_GATEWAY, err),
             StorageNodeError::Network(err) => (StatusCode::BAD_GATEWAY, err),
             StorageNodeError::Unknown(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            StorageNodeError::RateLimitExceeded(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
+            StorageNodeError::TaskCancelled(msg) => (StatusCode::CONFLICT, msg),
+            StorageNodeError::TaskFailed(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            StorageNodeError::QueueFull(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            StorageNodeError::ReceiveFailure(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
         let body = Json(serde_json::json!({
@@ -139,6 +165,13 @@ impl IntoResponse for StorageNodeError {
 impl From<rusqlite::Error> for StorageNodeError {
     fn from(err: rusqlite::Error) -> Self {
         StorageNodeError::Sqlite(err.to_string())
+    }
+}
+
+// Implement conversion from io::Error to StorageNodeError
+impl From<io::Error> for StorageNodeError {
+    fn from(err: io::Error) -> Self {
+        StorageNodeError::IO(err.to_string())
     }
 }
 
@@ -160,5 +193,12 @@ impl From<toml::ser::Error> for StorageNodeError {
 impl From<toml::de::Error> for StorageNodeError {
     fn from(err: toml::de::Error) -> Self {
         StorageNodeError::Serialization(err.to_string())
+    }
+}
+
+// Implement conversion from serde_json::Error to StorageNodeError
+impl From<serde_json::Error> for StorageNodeError {
+    fn from(err: serde_json::Error) -> Self {
+        StorageNodeError::Json(err.to_string())
     }
 }

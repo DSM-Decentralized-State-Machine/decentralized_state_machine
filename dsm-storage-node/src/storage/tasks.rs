@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// Task priority levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TaskPriority {
     /// Low priority task (e.g., cleanup operations)
     Low = 0,
@@ -248,6 +248,7 @@ impl TaskScheduler {
     /// Create a new task scheduler
     pub fn new(config: TaskSchedulerConfig) -> Self {
         let (control_tx, control_rx) = mpsc::channel(100);
+        let max_concurrent_tasks = config.max_concurrent_tasks;
         
         Self {
             config,
@@ -258,7 +259,7 @@ impl TaskScheduler {
             control_tx,
             control_rx: Arc::new(Mutex::new(control_rx)),
             running_flag: Arc::new(RwLock::new(false)),
-            running_count: Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_tasks)),
+            running_count: Arc::new(tokio::sync::Semaphore::new(max_concurrent_tasks)),
         }
     }
     
@@ -267,9 +268,7 @@ impl TaskScheduler {
         {
             let mut running = self.running_flag.write().await;
             if *running {
-                return Err(StorageNodeError::InvalidState {
-                    context: "Scheduler is already running".to_string(),
-                });
+                return Err(StorageNodeError::InvalidState("Scheduler is already running".to_string()));
             }
             *running = true;
         }
@@ -301,8 +300,14 @@ impl TaskScheduler {
                 let guard = running_flag.read().await;
                 *guard
             } {
+                // Get the control receiver lock outside the select to prevent it from being dropped
+                let mut control_guard = control_rx.lock().await;
+                
                 tokio::select! {
                     _ = interval.tick() => {
+                        // Release the lock immediately for this branch
+                        drop(control_guard);
+                        
                         // Check for scheduled tasks
                         Self::process_scheduled_tasks(
                             &config,
@@ -321,7 +326,7 @@ impl TaskScheduler {
                             &running_count,
                         ).await;
                     }
-                    Some(msg) = control_rx.lock().await.recv() => {
+                    Some(msg) = control_guard.recv() => {
                         match msg {
                             ControlMessage::Schedule(task) => {
                                 Self::handle_schedule(
@@ -431,8 +436,8 @@ impl TaskScheduler {
         
         // Send schedule message
         self.control_tx.send(ControlMessage::Schedule(task)).await
-            .map_err(|_| StorageNodeError::SendFailure {
-                context: "Failed to send task schedule message".to_string(),
+            .map_err(|_| StorageNodeError::Internal {
+                context: "Failed to send task schedule message".to_string()
             })?;
             
         // Return the task ID
@@ -455,11 +460,9 @@ impl TaskScheduler {
         self.wait_for_task(&task_id).await
     }
     
-    /// Cancel a task
-    pub async fn cancel(&self, task_id: &str) -> Result<()> {
         self.control_tx.send(ControlMessage::Cancel(task_id.to_string())).await
-            .map_err(|_| StorageNodeError::SendFailure {
-                context: "Failed to send task cancel message".to_string(),
+            .map_err(|_| StorageNodeError::Internal {
+                context: "Failed to send task cancel message".to_string()
             })?;
             
         Ok(())
@@ -469,9 +472,7 @@ impl TaskScheduler {
     pub async fn wait_for_task(&self, task_id: &str) -> Result<()> {
         let metadata_guard = self.task_metadata.read().await;
         let metadata = metadata_guard.get(task_id).ok_or_else(|| {
-            StorageNodeError::NotFound {
-                context: format!("Task {} not found", task_id),
-            }
+            StorageNodeError::NotFound(format!("Task {} not found", task_id))
         })?;
         
         let state = metadata.state;
@@ -479,12 +480,8 @@ impl TaskScheduler {
         
         match state {
             TaskState::Completed => Ok(()),
-            TaskState::Failed => Err(StorageNodeError::TaskFailed {
-                context: format!("Task {} failed", task_id),
-            }),
-            TaskState::Cancelled => Err(StorageNodeError::TaskCancelled {
-                context: format!("Task {} was cancelled", task_id),
-            }),
+            TaskState::Failed => Err(StorageNodeError::Internal(format!("Task {} failed", task_id))),
+            TaskState::Cancelled => Err(StorageNodeError::Internal(format!("Task {} was cancelled", task_id))),
             _ => {
                 // Create a channel to wait for completion
                 let (tx, rx) = oneshot::channel();
@@ -530,9 +527,11 @@ impl TaskScheduler {
     /// Shutdown the scheduler
     pub async fn shutdown(&self) -> Result<()> {
         self.control_tx.send(ControlMessage::Shutdown).await
-            .map_err(|_| StorageNodeError::SendFailure {
-                context: "Failed to send shutdown message".to_string(),
-            })?;
+            .map_err(|_| StorageNodeError::Internal("Failed to send shutdown message".to_string()))?;
+    /// Shutdown the scheduler
+    pub async fn shutdown(&self) -> Result<()> {
+        self.control_tx.send(ControlMessage::Shutdown).await
+            .map_err(|_| StorageNodeError::Internal("Failed to send shutdown message".to_string()))?;
             
         // Wait for the running flag to be set to false
         loop {
@@ -943,9 +942,7 @@ impl TaskScheduler {
         // Check if task already completed
         let metadata_guard = self.task_metadata.read().await;
         let metadata = metadata_guard.get(task_id).ok_or_else(|| {
-            StorageNodeError::NotFound {
-                context: format!("Task {} not found", task_id),
-            }
+            StorageNodeError::NotFound(format!("Task {} not found", task_id))
         })?;
         
         let state = metadata.state;

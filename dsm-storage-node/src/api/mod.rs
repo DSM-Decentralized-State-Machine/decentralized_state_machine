@@ -17,6 +17,7 @@ use tracing::info;
 mod handlers;
 mod unilateral;
 mod vault;
+mod middleware;
 
 pub use handlers::*;
 pub use unilateral::*;
@@ -75,6 +76,11 @@ impl From<StorageNodeError> for ApiError {
             StorageNodeError::Request(err) => ("REQUEST_ERROR", err.to_string()),
             StorageNodeError::Network(err) => ("NETWORK_ERROR", err.to_string()),
             StorageNodeError::Unknown(msg) => ("UNKNOWN_ERROR", msg),
+            StorageNodeError::RateLimitExceeded(msg) => ("RATE_LIMIT_EXCEEDED", msg),
+            StorageNodeError::TaskCancelled(msg) => ("TASK_CANCELLED", msg),
+            StorageNodeError::TaskFailed(msg) => ("TASK_FAILED", msg),
+            StorageNodeError::QueueFull(msg) => ("QUEUE_FULL", msg),
+            StorageNodeError::ReceiveFailure(msg) => ("RECEIVE_FAILURE", msg),
         };
 
         Self {

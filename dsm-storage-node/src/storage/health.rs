@@ -211,14 +211,12 @@ impl NodeHealth {
             let phi = -1.0 * (1.0 - cdf(y)).ln();
             self.failure_value = phi;
             phi
+        } else if time_since_last_seen > mean * 3.0 {
+            self.failure_value = 10.0; // High value indicating likely failure
+            10.0
         } else {
-            if time_since_last_seen > mean * 3.0 {
-                self.failure_value = 10.0; // High value indicating likely failure
-                10.0
-            } else {
-                self.failure_value = 0.0;
-                0.0
-            }
+            self.failure_value = 0.0;
+            0.0
         }
     }
     

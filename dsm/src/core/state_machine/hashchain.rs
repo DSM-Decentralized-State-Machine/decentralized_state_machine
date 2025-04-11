@@ -158,6 +158,20 @@ pub struct HashChain {
     /// Track batch statuses separately since StateBatch doesn't have a status field
     /// Track batch statuses separately since StateBatch doesn't have a status field
     batch_statuses: HashMap<u64, BatchStatus>,
+
+    /// Map of batch IDs to their validation state
+    batch_validation_state: HashMap<u64, BatchValidationState>,
+}
+
+/// Represents the validation state of a batch
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchValidationState {
+    /// Number of validations received
+    validation_count: u32,
+    /// Required number of validations before commitment
+    required_validations: u32,
+    /// Validation signatures received 
+    validation_signatures: Vec<Vec<u8>>,
 }
 
 #[allow(dead_code)]
@@ -179,6 +193,7 @@ impl HashChain {
             cached_transitions: HashMap::new(),
             next_batch_id: 0,
             batch_statuses: HashMap::new(),
+            batch_validation_state: HashMap::new(),
         }
     }
 
@@ -848,21 +863,8 @@ impl HashChain {
     /// # Returns
     /// * `Result<(), DsmError>` - Success or error
     pub fn commit_batch(&mut self, batch_id: u64) -> Result<(), DsmError> {
-        // Check if batch exists and is in correct state
-        let batch_status = self.batch_statuses.get(&batch_id).cloned().ok_or_else(|| {
-            DsmError::not_found("Batch", Some(format!("Batch {} not found", batch_id)))
-        })?;
-
-        // Verify batch is in Finalized state before committing
-        if batch_status != BatchStatus::Finalized {
-            return Err(DsmError::validation(
-                format!(
-                    "Cannot commit batch that is not in Finalized state: {:?}",
-                    batch_status
-                ),
-                None::<std::convert::Infallible>,
-            ));
-        }
+        // Verify batch exists and validate state transition
+        self.transition_batch_state(batch_id, BatchStatus::Committed)?;
 
         // Get cached transitions for this batch
         let transitions = self
@@ -900,9 +902,62 @@ impl HashChain {
             self.add_state(new_state.clone())?;
         }
 
-        // Update batch status to Committed
-        self.batch_statuses.insert(batch_id, BatchStatus::Committed);
+        Ok(())
+    }
 
+    /// Validate a batch and update its state
+    pub fn validate_batch(&mut self, batch_id: u64, validator_signature: Vec<u8>) -> Result<(), DsmError> {
+        // Get current batch status
+        let status = self.get_batch_status(batch_id)?;
+        
+        if status != BatchStatus::Finalized {
+            return Err(DsmError::validation(
+                format!("Cannot validate batch that is not Finalized: {:?}", status),
+                None::<std::convert::Infallible>,
+            ));
+        }
+
+        // Get or create validation state
+        let validation_state = self.batch_validation_state.entry(batch_id).or_insert(
+            BatchValidationState {
+                validation_count: 0,
+                required_validations: 2, // Configurable requirement
+                validation_signatures: Vec::new(),
+            }
+        );
+
+        // Add validation
+        validation_state.validation_signatures.push(validator_signature);
+        validation_state.validation_count += 1;
+
+        // Check if enough validations received
+        if validation_state.validation_count >= validation_state.required_validations {
+            // Update status to Committed when validation threshold met
+            self.commit_batch(batch_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Internal helper to transition batch state
+    fn transition_batch_state(&mut self, batch_id: u64, new_status: BatchStatus) -> Result<(), DsmError> {
+        // Get current status
+        let current_status = self.get_batch_status(batch_id)?;
+        
+        // Validate state transition
+        match (current_status, &new_status) {
+            // Valid transitions
+            (BatchStatus::Pending, BatchStatus::Finalized) => Ok(()),
+            (BatchStatus::Finalized, BatchStatus::Committed) => Ok(()),
+            
+            // Invalid transitions
+            (current, new) => Err(DsmError::invalid_operation(
+                format!("Invalid batch state transition from {:?} to {:?}", current, new)
+            )),
+        }?;
+
+        // Update status
+        self.batch_statuses.insert(batch_id, new_status);
         Ok(())
     }
 }
