@@ -4,36 +4,3 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    allow:
-      # Critical updates for cryptographic dependencies
-      - dependency-type: "direct"
-        update-type: "security"
-    # Specialized handling for crypto dependencies
-    groups:
-      crypto-primitives:
-        patterns:
-          - "blake3"
-          - "sha3"
-          - "ring"
-          - "pqcrypto*"
-          - "kyber"
-          - "sphincs"
-        update-types:
-          - "minor"
-          - "patch"
-    # Prevent breaking changes to core dependencies
-    ignore:
-      - dependency-name: "serde"
-        versions: ["2.x"]
-    # Handle Rust version compatibility
-    versioning-strategy: "auto"
-    commit-message:
-      prefix: "deps(security)"
-      include: "scope"
-    labels:
-      - "security"
-      - "dependencies"
-    reviewers:
-      - "cryptskii"
-    assignees:
-      - "cryptskii"
