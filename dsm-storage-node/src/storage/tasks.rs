@@ -14,6 +14,24 @@ use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{debug, info};
 
+/// Type alias for async task function
+pub type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+/// Type alias for task action function
+pub type TaskActionFn = Box<dyn FnOnce() -> TaskFuture + Send>;
+
+/// Type alias for task metrics callback function
+pub type TaskMetricsCallback = Box<dyn FnOnce(TaskMetrics) + Send>;
+
+/// Type alias for task queue map
+pub type TaskQueueMap = HashMap<TaskPriority, VecDeque<Task>>;
+
+/// Type alias for running tasks map
+pub type RunningTasksMap = HashMap<String, JoinHandle<Result<()>>>;
+
+/// Type alias for task metadata map
+pub type TaskMetadataMap = HashMap<String, TaskMetadata>;
+
 /// Task priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TaskPriority {
@@ -101,13 +119,13 @@ pub struct Task {
     pub metadata: TaskMetadata,
     
     /// Task action function
-    pub action: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send>,
+    pub action: TaskActionFn,
     
     /// Completion notification
     pub notify: Option<oneshot::Sender<Result<()>>>,
     
     /// Task metrics callback
-    pub metrics_callback: Option<Box<dyn FnOnce(TaskMetrics) + Send>>,
+    pub metrics_callback: Option<TaskMetricsCallback>,
 }
 
 /// Task metrics
@@ -182,6 +200,7 @@ pub enum OverflowPolicy {
 }
 
 /// Recurring task definition
+#[allow(dead_code)]
 struct RecurringTaskDef {
     /// Task name
     name: String,
@@ -220,13 +239,13 @@ pub struct TaskScheduler {
     config: TaskSchedulerConfig,
     
     /// Task queues (by priority)
-    queues: Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
+    queues: Arc<Mutex<TaskQueueMap>>,
     
     /// Running tasks
-    running: Arc<Mutex<HashMap<String, JoinHandle<Result<()>>>>>,
+    running: Arc<Mutex<RunningTasksMap>>,
     
     /// Task metadata storage
-    task_metadata: Arc<RwLock<HashMap<String, TaskMetadata>>>,
+    task_metadata: Arc<RwLock<TaskMetadataMap>>,
     
     /// Recurring tasks
     recurring_tasks: Arc<Mutex<Vec<RecurringTaskDef>>>,
@@ -636,9 +655,9 @@ impl TaskScheduler {
     /// Internal implementation of process_scheduled_tasks
     async fn process_scheduled_tasks_impl(
         config: &TaskSchedulerConfig,
-        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
-        running: &Arc<Mutex<HashMap<String, JoinHandle<Result<()>>>>>,
-        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        queues: &Arc<Mutex<TaskQueueMap>>,
+        running: &Arc<Mutex<RunningTasksMap>>,
+        task_metadata: &Arc<RwLock<TaskMetadataMap>>,
         running_count: Arc<tokio::sync::Semaphore>,
     ) {
         // Use try_acquire_owned to get a permit we can move into the async block
@@ -795,8 +814,8 @@ impl TaskScheduler {
     async fn process_recurring_tasks_impl(
         config: &TaskSchedulerConfig,
         recurring_tasks: &Arc<Mutex<Vec<RecurringTaskDef>>>,
-        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
-        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        queues: &Arc<Mutex<TaskQueueMap>>,
+        task_metadata: &Arc<RwLock<TaskMetadataMap>>,
         _running_count: Arc<tokio::sync::Semaphore>,
     ) {
         let now = Instant::now();
@@ -855,9 +874,10 @@ impl TaskScheduler {
                             // We need to temporarily release our mutable borrow on the queue
                             // to avoid multiple mutable borrows
                             
-                            // Drop the queue reference
-                            // Explicitly drop the mutable borrow by ending its scope
-                            drop(queue);
+                            // Instead of dropping the reference (which does nothing), use a scope to end the borrow
+                            {
+                                // End the borrow scope instead of using drop()
+                            }
                             
                             // Now, try to remove a task from the lowest priority queue
                             if let Some(q) = queues_guard.get_mut(&TaskPriority::Low) {
@@ -920,8 +940,8 @@ impl TaskScheduler {
     /// Internal implementation of handle_schedule
     async fn handle_schedule_impl(
         config: &TaskSchedulerConfig,
-        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
-        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        queues: &Arc<Mutex<TaskQueueMap>>,
+        task_metadata: &Arc<RwLock<TaskMetadataMap>>,
         task: Task,
     ) {
         let priority = task.metadata.priority;
@@ -971,7 +991,9 @@ impl TaskScheduler {
                     
                     // We need to temporarily release our mutable borrow on the queue
                     // to avoid multiple mutable borrows
-                    drop(queue);
+                    {
+                        // End the borrow scope instead of using drop()
+                    }
                     
                     // Now, try to remove a task from the lowest priority queue
                     if let Some(q) = queues_guard.get_mut(&TaskPriority::Low) {
@@ -1038,8 +1060,8 @@ impl TaskScheduler {
     
     /// Internal implementation of handle_cancel
     async fn handle_cancel_impl(
-        running: &Arc<Mutex<HashMap<String, JoinHandle<Result<()>>>>>,
-        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        running: &Arc<Mutex<RunningTasksMap>>,
+        task_metadata: &Arc<RwLock<TaskMetadataMap>>,
         task_id: &str,
     ) {
         // Cancel running task
@@ -1076,16 +1098,16 @@ impl TaskScheduler {
         match state {
             TaskState::Completed => {
                 let _ = tx.send(Ok(()));
-                return Ok(());
+                Ok(())
             }
             TaskState::Failed => {
                 let error_msg = error_message.unwrap_or_else(|| "Unknown error".to_string());
                 let _ = tx.send(Err(StorageNodeError::TaskFailed(error_msg)));
-                return Ok(());
+                Ok(())
             }
             TaskState::Cancelled => {
                 let _ = tx.send(Err(StorageNodeError::TaskCancelled(format!("Task {} was cancelled", task_id))));
-                return Ok(());
+                Ok(())
             }
             _ => {
                 // Task still running or queued, set up a watcher
@@ -1142,6 +1164,7 @@ pub struct EpidemicTasks {
     scheduler: Arc<TaskScheduler>,
     
     /// Node ID
+    #[allow(dead_code)]
     node_id: String,
     
     /// Tasks registered

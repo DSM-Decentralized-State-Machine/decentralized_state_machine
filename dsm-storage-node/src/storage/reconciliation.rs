@@ -213,6 +213,9 @@ pub struct ReconciliationResult {
 }
 
 /// State reconciliation engine
+type CustomHandler = Arc<dyn Fn(&ReconciliationContext) -> EpidemicEntry + Send + Sync>;
+type MetricsSender = Sender<(String, ConflictRecord)>;
+
 pub struct ReconciliationEngine {
     /// Default conflict resolution policy
     default_policy: ConflictResolutionPolicy,
@@ -224,7 +227,7 @@ pub struct ReconciliationEngine {
     id_policies: HashMap<String, ConflictResolutionPolicy>,
     
     /// Custom resolution handler
-    custom_handler: Option<Arc<dyn Fn(&ReconciliationContext) -> EpidemicEntry + Send + Sync>>,
+    custom_handler: Option<CustomHandler>,
     
     /// Conflict history for auditing
     conflict_history: RwLock<VecDeque<ConflictRecord>>,
@@ -239,9 +242,8 @@ pub struct ReconciliationEngine {
     semaphore: Arc<Semaphore>,
     
     /// Metrics sender
-    metrics_tx: Option<Sender<(String, ConflictRecord)>>,
+    metrics_tx: Option<MetricsSender>,
 }
-
 impl ReconciliationEngine {
     /// Create a new reconciliation engine
     pub fn new(default_policy: ConflictResolutionPolicy) -> Self {
@@ -701,6 +703,7 @@ pub struct ReconciliationProcessor {
     inbound_rx: Receiver<(Vec<EpidemicEntry>, tokio::sync::oneshot::Sender<Result<ReconciliationResult>>)>,
     
     /// Maximum batch size
+    #[allow(dead_code)]
     max_batch_size: usize,
     
     /// Maximum concurrent reconciliations
@@ -817,14 +820,14 @@ pub async fn batch_reconcile(
 }
 
 /// Optimized detection of conflicting entries
-pub fn detect_conflicts<'a>(entries: &'a [EpidemicEntry]) -> Vec<Vec<&'a EpidemicEntry>> {
+pub fn detect_conflicts(entries: &[EpidemicEntry]) -> Vec<Vec<&EpidemicEntry>> {
     // Group by blinded_id
     let mut groups: HashMap<String, Vec<&EpidemicEntry>> = HashMap::new();
     
     for entry in entries {
         groups
             .entry(entry.entry.blinded_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entry);
     }
     
@@ -886,7 +889,7 @@ pub fn generate_conflict_audit(records: &[ConflictRecord], detailed: bool) -> St
             output.push_str(&format!("Resolved Clock: {}\n", record.resolved_vector_clock));
         }
         
-        output.push_str("\n");
+        output.push('\n');
     }
     
     output
@@ -895,7 +898,7 @@ pub fn generate_conflict_audit(records: &[ConflictRecord], detailed: bool) -> St
 /// Format a timestamp for display
 fn format_timestamp(timestamp: u64) -> String {
     let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp as i64, 0)
-        .unwrap_or_else(|| chrono::Utc::now());
+        .unwrap_or_else(chrono::Utc::now);
         
     datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }

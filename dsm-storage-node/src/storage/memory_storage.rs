@@ -21,6 +21,10 @@ pub struct MemoryStorageConfig {
     pub max_entries: usize,
     pub persistence_path: Option<PathBuf>,
     pub eviction_policy: EvictionPolicy,
+    #[allow(dead_code)]
+    db_path: String,
+    #[allow(dead_code)]
+    compression: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +65,8 @@ impl Default for MemoryStorageConfig {
             max_entries: DEFAULT_MAX_ENTRIES,
             persistence_path: None,
             eviction_policy: EvictionPolicy::LRU,
+            db_path: "default_db_path".to_string(),
+            compression: Some("lz4".to_string()),
         }
     }
 }

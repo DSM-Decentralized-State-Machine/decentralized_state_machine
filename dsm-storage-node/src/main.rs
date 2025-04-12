@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .network
             .external_address
             .clone()
-            .unwrap_or_else(|| "".to_string()),
+            .unwrap_or_default(),
     };
 
     // Create storage config for the storage factory
@@ -171,9 +171,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "default-region".to_string(),
     );
 
+    // Create a staking service
+    let staking_config = dsm_storage_node::staking::StakingConfig {
+        enable_staking: true,
+        dsm_endpoint: Some(config.network.external_address.unwrap_or_default()),
+        staking_address: Some("default-staking-address".to_string()),
+        auto_compound: false,
+        reward_distribution_interval: 3600,
+        enable_subscriptions: false,
+        subscription_token_id: "default-token-id".to_string(),
+        subscription_payment_account: "default-payment-account".to_string(),
+        renewal_notification_period: 86400,
+        subscription_grace_period: 604800,
+    };
+
+    let staking_service = Arc::new(dsm_storage_node::staking::StakingService::new(
+        staking_config,
+    ));
+
     // Create API server
     let api_server = ApiServer::new(
-        storage_engine.clone(), // Use storage_engine directly
+        storage_engine.clone(),
+        staking_service,
         config.api.bind_address.clone(),
     );
 
