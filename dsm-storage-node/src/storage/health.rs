@@ -264,7 +264,7 @@ impl NodeHealth {
 
 /// Standard normal cumulative distribution function
 fn cdf(x: f64) -> f64 {
-    (1.0 + erf(x / 1.414_213_6)) / 2.0
+    (1.0 + erf(x / std::f64::consts::SQRT_2)) / 2.0
 }
 
 /// Error function approximation
@@ -348,6 +348,7 @@ pub struct HealthMonitor {
     sequence: Arc<RwLock<u64>>,
     
     /// System start time
+    #[allow(dead_code)]
     start_time: Instant,
 }
 
@@ -555,6 +556,7 @@ impl HealthMonitor {
             .as_millis() as u64
     }
     #[cfg(test)]
+    #[allow(dead_code)]
     fn test_phi_accrual() {
         let node = StorageNode {
             id: "test-node".to_string(),

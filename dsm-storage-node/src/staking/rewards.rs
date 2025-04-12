@@ -76,7 +76,7 @@ pub struct Ratio(u64);
 impl Ratio {
     /// Create a new ratio from a float (0.0 - 1.0)
     pub fn new(value: f64) -> Self {
-        assert!(value >= 0.0 && value <= 1.0, "Ratio must be between 0.0 and 1.0");
+        assert!((0.0..=1.0).contains(&value), "Ratio must be between 0.0 and 1.0");
         Self((value * 1_000_000.0) as u64)
     }
     
@@ -154,6 +154,7 @@ pub struct RewardVaultManager {
     
     /// Distribution channel
     distribution_tx: mpsc::Sender<DistributionResult>,
+    #[allow(dead_code)]
     distribution_rx: Mutex<mpsc::Receiver<DistributionResult>>,
 }
 
@@ -205,18 +206,23 @@ struct DistributionRequest {
 #[derive(Debug, Clone)]
 struct DistributionResult {
     /// Vault ID that was distributed
+    #[allow(dead_code)]
     vault_id: String,
     
     /// Success or failure
+    #[allow(dead_code)]
     success: bool,
     
     /// Distribution timestamp
+    #[allow(dead_code)]
     timestamp: u64,
     
     /// Error message if failed
+    #[allow(dead_code)]
     error: Option<String>,
     
     /// Distribution details if successful
+    #[allow(dead_code)]
     distribution_details: Option<HashMap<String, u64>>,
 }
 
@@ -269,7 +275,7 @@ impl RewardVaultManager {
     ) -> Result<String> {
         // Validate the ratios sum to 1.0 (or close enough accounting for fixed-point precision)
         let ratio_sum: u64 = recipients.values().map(|r| r.raw_value()).sum();
-        if ratio_sum < 990_000 || ratio_sum > 1_010_000 {
+        if !(990_000..=1_010_000).contains(&ratio_sum) {
             return Err(StorageNodeError::Staking(format!(
                 "Invalid recipient ratios: sum must be 1.0, got {}", 
                 ratio_sum as f64 / 1_000_000.0

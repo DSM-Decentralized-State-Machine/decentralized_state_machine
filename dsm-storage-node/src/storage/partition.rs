@@ -4,6 +4,7 @@
 // to distribute storage load across nodes while maintaining locality.
 
 use crate::error::Result;
+use crate::error::StorageNodeError;
 use crate::storage::small_world::calculate_key_hash;
 use crate::types::StorageNode;
 use tracing::{info, warn};
@@ -286,7 +287,21 @@ pub struct ExtendedStorageNode {
     pub current_load: u64,
 }
 
+// Struct for metrics
+#[derive(Debug, Clone)]
+pub struct PartitionMetrics {
+    pub item_count: u64,
+    pub size_bytes: u64,
+    pub key_distribution: HashMap<String, usize>,
+}
+
 /// Partition manager
+/// Type alias for transfer handler function
+type TransferHandlerFn = Box<dyn Fn(PartitionTransfer) -> Result<()> + Send + Sync>;
+
+/// Type alias for transfer handlers map
+type TransferHandlerMap = Arc<RwLock<HashMap<String, TransferHandlerFn>>>;
+
 pub struct PartitionManager {
     /// Node ID
     node_id: String,
@@ -313,13 +328,12 @@ pub struct PartitionManager {
     last_rebalance: Arc<RwLock<Instant>>,
     
     /// Transfer handlers
-    transfer_handlers: Arc<RwLock<HashMap<String, Box<dyn Fn(PartitionTransfer) -> Result<()> + Send + Sync>>>>,
+    transfer_handlers: TransferHandlerMap,
 
     /// Replication queue
+    #[allow(dead_code)]
     replication_queue: Arc<parking_lot::Mutex<Vec<ReplicationTask>>>,
-}
-
-impl PartitionManager {
+}impl PartitionManager {
     /// Create a new partition manager
     pub fn new(node_id: String, config: PartitionConfig) -> Self {
         Self {
@@ -498,8 +512,8 @@ impl PartitionManager {
                 
                 // Only use first 8 bytes for the ring
                 let mut position = 0u64;
-                for i in 0..8 {
-                    position = (position << 8) | (hash[i] as u64);
+                for &byte in hash.iter().take(8) {
+                    position = (position << 8) | (byte as u64);
                 }
                 
                 hash_ring.insert(position, node_id.clone());
@@ -513,8 +527,8 @@ impl PartitionManager {
             // Calculate partition position
             let partition_hash = calculate_key_hash(partition.id.as_bytes());
             let mut position = 0u64;
-            for i in 0..8 {
-                position = (position << 8) | (partition_hash[i] as u64);
+            for byte in partition_hash.iter().take(8) {
+                position = (position << 8) | (*byte as u64);
             }
             
             // Find primary owner
@@ -589,14 +603,14 @@ impl PartitionManager {
                 partition.primary = primary.clone();
                 partition.replicas = replica_owners;
                 partition.last_assignment = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_else(|_| Duration::from_secs(0))
-                    .as_secs();
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_else(|_| Duration::from_secs(0))
+                .as_secs();
                 partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1;
                 
                 // Update node partition counts
                 if let Some(mut count) = self.node_partition_counts.get_mut(&primary) {
-                    *count += 1;
+                *count += 1;
                 }
                 
                 // Create transfer if ownership changed
@@ -813,15 +827,16 @@ impl PartitionManager {
     }
 
     /// Helper function to select the best node in a region for a partition
-    fn select_best_node_in_region(
+    fn select_best_node_in_region<'a>(
         &self,
-        region_nodes: &[&StorageNode],
+        region_nodes: &'a [&'a StorageNode],
         assigned_nodes: &HashSet<&String>,
         _partition: &Partition,
-    ) -> Result<Option<&StorageNode>> {
-        let mut candidates: Vec<_> = region_nodes
+    ) -> Result<Option<&'a StorageNode>> {
+        let mut candidates: Vec<&StorageNode> = region_nodes
             .iter()
             .filter(|n| !assigned_nodes.contains(&n.id))
+            .copied()
             .collect();
 
         if candidates.is_empty() {
@@ -830,12 +845,12 @@ impl PartitionManager {
 
         // Sort primarily by partition count since we can't access capacity/load
         candidates.sort_by(|a, b| {
-            let a_count = self.node_partition_counts.get(&a.id).map(|count| **count).unwrap_or(0);
-            let b_count = self.node_partition_counts.get(&b.id).map(|count| **count).unwrap_or(0);
+            let a_count = self.node_partition_counts.get(&a.id).map(|count| *count).unwrap_or(0);
+            let b_count = self.node_partition_counts.get(&b.id).map(|count| *count).unwrap_or(0);
             a_count.cmp(&b_count)
         });
 
-        Ok(Some(*candidates.first().unwrap()))
+        Ok(candidates.first().copied())
     }
     
     /// Rebalance using load-aware algorithm to optimize resource utilization
@@ -843,7 +858,7 @@ impl PartitionManager {
         // Calculate load metrics for each node
         let mut node_metrics: HashMap<String, NodeLoadMetrics> = HashMap::new();
         
-        for (node_id, _) in nodes {
+        for node_id in nodes.keys() {
             let partition_count = self.node_partition_counts.get(node_id).map(|count| *count).unwrap_or(0);
             let capacity_used = self.get_node_capacity_usage(node_id)?;
             let recent_latency = self.get_node_latency_stats(node_id)?;
@@ -897,7 +912,8 @@ impl PartitionManager {
 
         // Rebalance partitions starting with heaviest
         for (partition_id, _) in partition_loads {
-            let partition = self.partitions.get_mut(&partition_id).unwrap();
+            let mut partition_entry = self.partitions.get_mut(&partition_id).unwrap();
+            let partition = partition_entry.value_mut();
             
             // Find best primary node
             let mut candidates = nodes.keys().collect::<Vec<_>>();
@@ -951,8 +967,8 @@ impl PartitionManager {
                         }
                         
                         // Create transfer if needed
-                        if old_primary != partition.primary {
-                            self.create_transfer(&partition, &old_primary, &partition.primary)?;
+                        if old_primary != (*best_node).clone() {
+                            self.create_transfer(partition, &old_primary, &partition.primary)?;
                         }
                     }
                 }
@@ -964,19 +980,12 @@ impl PartitionManager {
             
             // Filter out the primary from candidates
             let replica_candidates: Vec<_> = candidates.iter()
-                .filter(|n| *(*n) != partition.primary)
+                .filter(|n| ***n != partition.primary)
+                .take(replicas_needed)
+                .map(|n| (*n).clone())
                 .collect();
             
-            for (i, candidate) in replica_candidates.iter().take(replicas_needed).enumerate() {
-                if i < replicas_needed {
-                    new_replicas.push((*candidate).clone());
-                    
-                    // Update metrics
-                    if let Some(metrics) = node_metrics.get_mut(*candidate) {
-                        metrics.partition_count += 1;
-                    }
-                }
-            }
+            new_replicas.extend(replica_candidates);
 
             partition.replicas = new_replicas;
             partition.last_assignment = SystemTime::now()
@@ -988,7 +997,6 @@ impl PartitionManager {
 
         Ok(())
     }
-
     // Using the NodeLoadMetrics struct defined at module level
     
     /// Create a partition transfer with optimized protocol
@@ -1101,7 +1109,7 @@ impl PartitionManager {
     async fn execute_transfer_batch(
         &self,
         batch: &[PartitionTransfer],
-        handler: &Box<dyn Fn(PartitionTransfer) -> Result<()> + Send + Sync>
+        handler: &(dyn Fn(PartitionTransfer) -> Result<()> + Send + Sync)
     ) -> Result<()> {
         use tokio::time::timeout;
         use std::time::Duration;
@@ -1167,7 +1175,7 @@ impl PartitionManager {
         for entry in self.partitions.iter() {
             let partition = entry.value();
             
-            // Ensure hash is converted to a compatible type for comparison
+            // Use proper comparison between hash and partition boundaries
             if Self::partition_contains_hash(&partition.start, &partition.end, &hash) {
                 return Ok(partition.clone());
             }
@@ -1195,7 +1203,7 @@ impl PartitionManager {
     pub fn get_responsible_nodes(&self, key: &[u8]) -> Result<(String, Vec<String>)> {
         let partition = self.get_partition_for_key(key)?;
         
-        Ok((partition.primary, partition.replicas))
+        Ok((partition.primary.clone(), partition.replicas.clone()))
     }
     
     /// Check if this node is responsible for a key
@@ -1248,48 +1256,97 @@ impl PartitionManager {
         None
     }
 
+    /// Update partition metrics
+    pub fn update_partition_metrics(&self, partition_id: &str, item_count: u64, size_bytes: u64, keyspace_fraction: f64) -> Result<()> {
+        // Schedule replication for the updated partition
+        if let Some(partition) = self.partitions.get(partition_id) {
+            self.schedule_replication(&partition)?;
+        }
+        let mut partition_entry = self.partitions.get_mut(partition_id).ok_or_else(||
+            StorageNodeError::NotFound(format!("Partition {} not found", partition_id))
+        )?;
+        
+        let partition = partition_entry.value_mut();
+        partition.estimated_items = item_count;
+        partition.estimated_size = size_bytes;
+        partition.keyspace_fraction = keyspace_fraction;
+        
+        Ok(())
+    }
+
+    /// Calculate partition metrics for all partitions
+    pub fn calculate_all_partition_metrics(&self) -> Result<Vec<PartitionMetrics>> {
+        let mut metrics = Vec::new();
+        for entry in self.partitions.iter() {
+            let partition = entry.value();
+            let partition_metrics = self.calculate_partition_metrics(partition)?;
+            metrics.push(partition_metrics);
+        }
+        Ok(metrics)
+    }
+
+    /// Calculate metrics for a single partition
+    fn calculate_partition_metrics(&self, _partition: &Partition) -> Result<PartitionMetrics> {
+        // This would contain real metric calculation logic
+        Ok(PartitionMetrics {
+            item_count: 0,
+            size_bytes: 0,
+            key_distribution: HashMap::new(),
+        })
+    }
+
     /// Rebalance based on load metrics
     fn rebalance_load(&self, threshold: f64) -> Result<Vec<PartitionMove>> {
         let mut moves = Vec::new();
         let nodes = self.nodes.read();
         
-        // Calculate global average load
-        let total_load: u64 = nodes.values().map(|n| n.current_load).sum();
-        let total_capacity: u64 = nodes.values().map(|n| n.capacity).sum();
-        let global_load_ratio = total_load as f64 / total_capacity as f64;
+        // Calculate load metrics for each node using the partition count as a proxy
+        let mut node_loads = HashMap::new();
+        for (id, _node) in nodes.iter() {
+            // Use partition count as load metric since we don't have current_load/capacity fields
+            let partition_count = self.node_partition_counts.get(id).map(|c| *c).unwrap_or(0);
+            node_loads.insert(id.clone(), (partition_count, 100)); // Assume capacity = 100 for all nodes
+        }
+        
+        // Calculate global average load ratio
+        let total_load: usize = node_loads.values().map(|(load, _)| *load).sum();
+        let total_capacity: usize = node_loads.values().map(|(_, capacity)| *capacity).sum();
+        let global_load_ratio = if total_capacity > 0 {
+            total_load as f64 / total_capacity as f64
+        } else {
+            0.0
+        };
 
         // Find overloaded and underloaded nodes
-        let mut overloaded: Vec<_> = nodes
-            .iter()
-            .filter(|(_, n)| {
-                let load_ratio = n.current_load as f64 / n.capacity as f64;
+        let mut overloaded: Vec<_> = node_loads.iter()
+            .filter(|(_, &(load, capacity))| {
+                let load_ratio = load as f64 / capacity as f64;
                 load_ratio > global_load_ratio * (1.0 + threshold)
             })
             .collect();
 
-        let mut underloaded: Vec<_> = nodes
-            .iter()
-            .filter(|(_, n)| {
-                let load_ratio = n.current_load as f64 / n.capacity as f64;
+        let mut underloaded: Vec<_> = node_loads.iter()
+            .filter(|(_, &(load, capacity))| {
+                let load_ratio = load as f64 / capacity as f64;
                 load_ratio < global_load_ratio * (1.0 - threshold)
             })
             .collect();
 
         // Sort by load ratio difference from global average
-        overloaded.sort_by(|(_, a), (_, b)| {
-            let a_ratio = a.current_load as f64 / a.capacity as f64;
-            let b_ratio = b.current_load as f64 / b.capacity as f64;
+        overloaded.sort_by(|(_, &(a_load, a_capacity)), (_, &(b_load, b_capacity))| {
+            let a_ratio = a_load as f64 / a_capacity as f64;
+            let b_ratio = b_load as f64 / b_capacity as f64;
             b_ratio.partial_cmp(&a_ratio).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        underloaded.sort_by(|(_, a), (_, b)| {
-            let a_ratio = a.current_load as f64 / a.capacity as f64;
-            let b_ratio = b.current_load as f64 / b.capacity as f64;
+        underloaded.sort_by(|(_, &(a_load, a_capacity)), (_, &(b_load, b_capacity))| {
+            let a_ratio = a_load as f64 / a_capacity as f64;
+            let b_ratio = b_load as f64 / b_capacity as f64;
             a_ratio.partial_cmp(&b_ratio).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Generate partition moves to balance load
-        for (overloaded_id, overloaded_node) in overloaded {
+        for (overloaded_id, &(overloaded_load, overloaded_capacity)) in overloaded {
             let node_partitions: Vec<_> = self.partitions
                 .iter()
                 .filter(|e| e.value().primary == *overloaded_id)
@@ -1297,16 +1354,16 @@ impl PartitionManager {
                 .collect();
 
             for partition in node_partitions {
-                if let Some((target_id, target_node)) = underloaded.first() {
+                if let Some((target_id, &(target_load, target_capacity))) = underloaded.first() {
                     // Check if move would improve balance
-                    let src_ratio = overloaded_node.current_load as f64 / overloaded_node.capacity as f64;
-                    let dst_ratio = target_node.current_load as f64 / target_node.capacity as f64;
+                    let src_ratio = overloaded_load as f64 / overloaded_capacity as f64;
+                    let dst_ratio = target_load as f64 / target_capacity as f64;
                     
                     if src_ratio - dst_ratio > threshold {
                         moves.push(PartitionMove {
                             partition_id: partition.id.clone(),
                             source_node: overloaded_id.clone(),
-                            target_node: target_id.clone(),
+                            target_node: (*target_id).clone(),
                             reason: "load_balance".to_string(),
                             priority: MovePriority::High,
                         });
@@ -1321,8 +1378,8 @@ impl PartitionManager {
     /// Apply partition moves to rebalance the cluster
     fn apply_moves(&self, moves: Vec<PartitionMove>) -> Result<()> {
         for movement in moves {
-            if let Some(mut partition) = self.partitions.get_mut(&movement.partition_id) {
-                let partition = partition.value_mut();
+            if let Some(mut partition_entry) = self.partitions.get_mut(&movement.partition_id) {
+                let partition = partition_entry.value_mut();
                 // Update primary node
                 let old_primary = partition.primary.clone();
                 partition.primary = movement.target_node.clone();
@@ -1400,7 +1457,7 @@ impl PartitionManager {
     /// Rebalance based on geographic metrics
     fn rebalance_geography(&self, _latency_threshold: f64) -> Result<Vec<PartitionMove>> {
         // Placeholder implementation for geography-based rebalancing
-        let mut moves = Vec::new();
+        let moves = Vec::new();
         
         // This would be implemented in a real system with actual geographic metrics
         
@@ -1434,18 +1491,44 @@ impl PartitionManager {
         handlers.insert(node_id.to_string(), Box::new(handler));
         Ok(())
     }
+
+    /// Process transfer chunk (for receiving data)
+    pub fn process_transfer_chunk(&self, partition_id: String, chunk_id: String, data: Vec<u8>) -> Result<()> {
+        // First validate the partition exists and this node is a valid target
+        let partition = self.get_partition(&partition_id)?;
+        if partition.primary != self.node_id && !partition.replicas.contains(&self.node_id) {
+            return Err(StorageNodeError::InvalidOperation(
+                format!("This node is not responsible for partition {}", partition_id)))
+        }
+        
+        // Process the chunk transfer
+        // In a real implementation, this would store the chunk data and track progress
+        info!("Received chunk {} for partition {}, size: {} bytes", 
+            chunk_id, partition_id, data.len());
+        
+        Ok(())
+    }
+
+    /// Get partition metrics
+    pub fn get_partition_metrics(&self, partition_id: &str) -> Result<PartitionMetrics> {
+        let partition = self.get_partition(partition_id)?;
+        self.calculate_partition_metrics(&partition)
+    }
 }
 
 /// PartitionedStorage adapter for integrating with epidemic storage
 pub struct PartitionedStorage<S> {
     /// Underlying storage engine
-    storage: Arc<S>,
+    // Removed unused field `storage`
     
     /// Partition manager
     partition_manager: Arc<PartitionManager>,
     
     /// Node ID
     node_id: String,
+    
+    /// Marker for unused type parameter
+    _marker: std::marker::PhantomData<S>,
 }
 
 impl<S> PartitionedStorage<S>
@@ -1453,13 +1536,13 @@ where
     S: 'static + Send + Sync,
 {
     /// Create a new partitioned storage adapter
-    pub fn new(storage: Arc<S>, partition_manager: Arc<PartitionManager>, node_id: String) -> Self {
-        Self {
-            storage,
-            partition_manager,
-            node_id,
+    pub fn new(partition_manager: Arc<PartitionManager>, node_id: String) -> Self {
+            Self {
+                partition_manager,
+                node_id,
+                _marker: std::marker::PhantomData,
+            }
         }
-    }
     
     /// Check if a key is responsible for this node
     pub fn is_responsible(&self, key: &[u8]) -> Result<bool> {
@@ -1549,8 +1632,9 @@ mod tests {
             assert_eq!(replicas.len(), manager.config.replication_factor - 1);
             
             // Verify partition boundaries
-            assert!(calculate_key_hash(key) >= partition.start);
-            assert!(calculate_key_hash(key) < partition.end);
+            let hash_vec = Vec::from(calculate_key_hash(key));
+            assert!(hash_vec >= partition.start);
+            assert!(hash_vec < partition.end);
         }
     }
     

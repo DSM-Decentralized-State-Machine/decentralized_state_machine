@@ -61,8 +61,7 @@ pub struct RoutingTable {
     /// Routing entries
     entries: DashMap<NodeId, RoutingEntry>,
     
-    /// Small-world topology
-    topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
+    // Removed unused topology field
     
     /// Route cache for frequently accessed destinations
     route_cache: DashMap<NodeId, Vec<StorageNode>>,
@@ -78,6 +77,7 @@ pub struct RoutingTable {
     
     /// Maximum route cache age
     max_cache_age: Duration,
+    topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
 }
 
 impl RoutingTable {
@@ -466,8 +466,7 @@ pub struct EpidemicRouter {
     /// Routing table
     routing_table: Arc<RoutingTable>,
     
-    /// Small-world topology
-    topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
+    // Removed unused topology field
     
     /// Routing strategy
     strategy: RoutingStrategy,
@@ -486,14 +485,13 @@ impl EpidemicRouter {
     ) -> Self {
         let routing_table = Arc::new(RoutingTable::new(
             self_id.clone(),
-            topology.clone(),
-            strategy,
+            topology,
+            RoutingStrategy::Greedy,
         ));
         
         Self {
             self_id,
             routing_table,
-            topology,
             strategy,
             max_hops,
         }

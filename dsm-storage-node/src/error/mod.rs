@@ -17,6 +17,9 @@ pub type Result<T> = result::Result<T, StorageNodeError>;
 /// Error type for DSM Storage Node operations
 #[derive(Debug, Error, Clone)]
 pub enum StorageNodeError {
+    /// Operation not permitted or invalid operation
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
     /// Timeout error
     #[error("Operation timed out")]
     Timeout,
@@ -101,6 +104,10 @@ pub enum StorageNodeError {
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
 
+    /// Concurrency limit exceeded
+    #[error("Concurrency limit exceeded")]
+    ConcurrencyLimitExceeded,
+
     /// Task cancelled
     #[error("Task cancelled: {0}")]
     TaskCancelled(String),
@@ -122,6 +129,7 @@ pub enum StorageNodeError {
 impl IntoResponse for StorageNodeError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
+            StorageNodeError::InvalidOperation(msg) => (StatusCode::BAD_REQUEST, msg),
             StorageNodeError::Timeout => (StatusCode::REQUEST_TIMEOUT, "Operation timed out".to_string()),
             StorageNodeError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
             StorageNodeError::Configuration => (StatusCode::INTERNAL_SERVER_ERROR, "Configuration error".to_string()),
@@ -144,6 +152,7 @@ impl IntoResponse for StorageNodeError {
             StorageNodeError::Unknown(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             StorageNodeError::RateLimitExceeded(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
             StorageNodeError::TaskCancelled(msg) => (StatusCode::CONFLICT, msg),
+            StorageNodeError::ConcurrencyLimitExceeded => (StatusCode::TOO_MANY_REQUESTS, "Concurrency limit exceeded".to_string()),
             StorageNodeError::TaskFailed(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             StorageNodeError::QueueFull(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             StorageNodeError::ReceiveFailure(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),

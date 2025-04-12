@@ -105,16 +105,16 @@ impl LatencyHistogram {
     /// Create a new latency histogram
     pub fn new() -> Self {
         // Create standard buckets with exponential scaling
-        let mut buckets = Vec::new();
-        
         // 0-100us, 100us-1ms, 1ms-10ms, 10ms-100ms, 100ms-1s, 1s-10s, 10s+
-        buckets.push(LatencyBucket { min_us: 0, max_us: 100, count: 0 });
-        buckets.push(LatencyBucket { min_us: 100, max_us: 1_000, count: 0 });
-        buckets.push(LatencyBucket { min_us: 1_000, max_us: 10_000, count: 0 });
-        buckets.push(LatencyBucket { min_us: 10_000, max_us: 100_000, count: 0 });
-        buckets.push(LatencyBucket { min_us: 100_000, max_us: 1_000_000, count: 0 });
-        buckets.push(LatencyBucket { min_us: 1_000_000, max_us: 10_000_000, count: 0 });
-        buckets.push(LatencyBucket { min_us: 10_000_000, max_us: u64::MAX, count: 0 });
+        let buckets = vec![
+            LatencyBucket { min_us: 0, max_us: 100, count: 0 },
+            LatencyBucket { min_us: 100, max_us: 1_000, count: 0 },
+            LatencyBucket { min_us: 1_000, max_us: 10_000, count: 0 },
+            LatencyBucket { min_us: 10_000, max_us: 100_000, count: 0 },
+            LatencyBucket { min_us: 100_000, max_us: 1_000_000, count: 0 },
+            LatencyBucket { min_us: 1_000_000, max_us: 10_000_000, count: 0 },
+            LatencyBucket { min_us: 10_000_000, max_us: u64::MAX, count: 0 },
+        ];
         
         Self {
             buckets,
@@ -489,7 +489,7 @@ impl KeyMetrics {
         
         let now = current_timestamp_millis();
         let window_ms = window_minutes * 60 * 1000;
-        let cutoff = if now > window_ms { now - window_ms } else { 0 };
+        let cutoff = now.saturating_sub(window_ms);
         
         let count_in_window = self.access_timestamps.iter()
             .filter(|&&ts| ts >= cutoff)
@@ -702,9 +702,11 @@ pub struct MetricsSnapshot {
 /// Metrics collector for the epidemic storage system
 pub struct MetricsCollector {
     /// Node ID
+    #[allow(dead_code)]
     node_id: String,
     
     /// Collection start time
+    #[allow(dead_code)]
     start_time: Instant,
     
     /// Configuration
@@ -758,7 +760,6 @@ pub struct MetricsCollector {
     /// Anti-entropy round counter
     anti_entropy_rounds: AtomicU64,
 }
-
 /// Record context for operation metrics
 pub struct OperationContext {
     /// Collector reference

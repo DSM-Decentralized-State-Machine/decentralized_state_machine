@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 /// Rate limiter for API requests
+#[allow(dead_code)]
 pub struct RateLimiter {
     /// Window size in seconds
     window_size: u64,
@@ -26,6 +27,7 @@ pub struct RateLimiter {
     counters: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
+#[allow(dead_code)]
 impl RateLimiter {
     /// Create a new rate limiter
     pub fn new(window_size: u64, max_requests: u32) -> Self {
@@ -69,6 +71,7 @@ impl RateLimiter {
     }}
 
 /// Get client IP from request
+#[allow(dead_code)]
 fn get_client_ip(request: &Request<Body>) -> String {
     // Try to get X-Forwarded-For header
     if let Some(header) = request.headers().get("X-Forwarded-For") {
@@ -93,6 +96,7 @@ fn get_client_ip(request: &Request<Body>) -> String {
 }
 
 /// Verify token (placeholder implementation)
+#[allow(dead_code)]
 fn verify_token(token: &str) -> bool {
     // TODO: Implement token verification using DSM crypto
     // This is a placeholder implementation that accepts all tokens
@@ -100,6 +104,7 @@ fn verify_token(token: &str) -> bool {
 }
 
 /// Verify signature (placeholder implementation)
+#[allow(dead_code)]
 fn verify_signature(signature: &str) -> bool {
     // TODO: Implement signature verification using DSM crypto
     // This is a placeholder implementation that accepts all signatures
@@ -107,6 +112,7 @@ fn verify_signature(signature: &str) -> bool {
 }
 
 /// Rate limiting middleware
+#[allow(dead_code)]
 pub async fn rate_limiting(
     State(limiter): State<Arc<RateLimiter>>,
     request: Request<Body>,
@@ -116,7 +122,7 @@ pub async fn rate_limiting(
     let client_ip = get_client_ip(&request);
     
     // Check rate limit
-    if let Err(_) = limiter.check_rate_limit(&client_ip) {
+    if limiter.check_rate_limit(&client_ip).is_err() {
         warn!("Rate limit exceeded for client {}", client_ip);
         return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
@@ -126,6 +132,7 @@ pub async fn rate_limiting(
 }
 
 /// Authentication middleware
+#[allow(dead_code)]
 pub async fn authenticate(
     headers: HeaderMap,
     request: Request<Body>,
@@ -175,6 +182,7 @@ pub async fn authenticate(
 }
 
 /// Request logging middleware
+#[allow(dead_code)]
 pub async fn log_request(
     request: Request<Body>,
     next: Next<Body>,

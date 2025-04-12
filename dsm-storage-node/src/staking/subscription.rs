@@ -471,26 +471,26 @@ impl SubscriptionManager {
                                     subscriptions.insert(subscription.id.clone(), subscription);
                                 }
                                 
-                                return Ok(true);
+                                Ok(true)
                             } else {
                                 // Payment insufficient
                                 warn!("Payment amount insufficient for subscription {}: expected {}, got {}",
                                     subscription.id, subscription.amount_paid, amount);
                                 
-                                return Ok(false);
+                                Ok(false)
                             }
                         } else {
                             // No amount found in payment data
                             warn!("No amount found in payment data for subscription {}", 
                                 subscription.id);
                             
-                            return Ok(false);
+                            Ok(false)
                         }
                     },
                     Err(e) => {
                         // Failed to claim content
                         warn!("Failed to claim vault content: {}", e);
-                        return Ok(false);
+                        Ok(false)
                     }
                 }
             },
@@ -499,12 +499,12 @@ impl SubscriptionManager {
                 warn!("Payment vault conditions not met for subscription {}", 
                     subscription.id);
                 
-                return Ok(false);
+                Ok(false)
             },
             Err(e) => {
                 // Error during unlocking
                 warn!("Error unlocking payment vault: {}", e);
-                return Ok(false);
+                Ok(false)
             }
         }
     }
@@ -615,7 +615,7 @@ impl SubscriptionManager {
             subscription.usage.storage_used += storage_delta as u64;
         } else {
             // Ensure we don't underflow
-            let abs_delta = storage_delta.abs() as u64;
+            let abs_delta = storage_delta.unsigned_abs();
             subscription.usage.storage_used = subscription.usage.storage_used.saturating_sub(abs_delta);
         }
         

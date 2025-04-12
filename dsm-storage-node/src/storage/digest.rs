@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
-use tracing::{debug};
+use tracing::debug;
 
 /// A compact representation of an entry for digest generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,15 +116,18 @@ pub struct MerkleNode {
 #[derive(Debug)]
 pub struct DigestGenerator {
     /// Node ID
+    #[allow(dead_code)]
     node_id: String,
     
     /// Region
     region: String,
     
     /// Bloom filter size for bloom digests (bits)
+    #[allow(dead_code)]
     bloom_filter_size: usize,
     
     /// Bloom filter hash count
+    #[allow(dead_code)]
     bloom_hash_count: usize,
     
     /// Maximum entries per digest
@@ -390,7 +393,7 @@ impl DigestGenerator {
         }
         
         // Then, check entries only in digest2
-        for (id, _) in &digest2.entries {
+        for id in digest2.entries.keys() {
             if !digest1.entries.contains_key(id) {
                 only_in_second.insert(id.clone());
             }
@@ -555,6 +558,7 @@ impl DigestGenerator {
 
 /// Digest registry for tracking peer digests
 pub struct DigestRegistry {
+    #[allow(dead_code)]
     /// Node ID
     node_id: String,
     
@@ -567,7 +571,6 @@ pub struct DigestRegistry {
     /// Known difference sets
     difference_sets: HashMap<String, DigestDiff>,
 }
-
 impl DigestRegistry {
     /// Create a new digest registry
     pub fn new(node_id: String) -> Self {

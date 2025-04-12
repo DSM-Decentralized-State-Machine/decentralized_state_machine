@@ -118,7 +118,7 @@
         
         // Use DSM encrypt_for_recipient
         let encrypted = encrypt_for_recipient(recipient_public_key, data)
-            .ok_or_else(|| StorageNodeError::Encryption(format!("Failed to encrypt data")))?;
+            .ok_or_else(|| StorageNodeError::Encryption("Failed to encrypt data".to_string()))?;
             
         Ok(encrypted)
     }
@@ -129,7 +129,7 @@
         
         // Use DSM decrypt_from_sender
         let decrypted = decrypt_from_sender(sender_public_key, data)
-            .ok_or_else(|| StorageNodeError::Encryption(format!("Failed to decrypt data")))?;
+            .ok_or_else(|| StorageNodeError::Encryption("Failed to decrypt data".to_string()))?;
             
         Ok(decrypted)
     }

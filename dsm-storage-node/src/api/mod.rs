@@ -93,6 +93,8 @@ impl From<StorageNodeError> for ApiError {
             StorageNodeError::TaskFailed(msg) => ("TASK_FAILED", msg),
             StorageNodeError::QueueFull(msg) => ("QUEUE_FULL", msg),
             StorageNodeError::ReceiveFailure(msg) => ("RECEIVE_FAILURE", msg),
+            StorageNodeError::InvalidOperation(msg) => ("INVALID_OPERATION", msg),
+            StorageNodeError::ConcurrencyLimitExceeded => ("CONCURRENCY_LIMIT_EXCEEDED", "Concurrency limit exceeded".to_string()),
         };
 
         Self {

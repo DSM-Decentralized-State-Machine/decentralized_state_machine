@@ -202,6 +202,18 @@ struct RecurringTaskDef {
     factory: Box<dyn Fn() -> Task + Send + Sync>,
 }
 
+/// Control message for scheduler
+enum ControlMessage {
+    /// Schedule a task
+    Schedule(Task),
+    
+    /// Cancel a task
+    Cancel(String),
+    
+    /// Shutdown the scheduler
+    Shutdown,
+}
+
 /// Task scheduler for background operations
 pub struct TaskScheduler {
     /// Configuration
@@ -230,18 +242,6 @@ pub struct TaskScheduler {
     
     /// Running task count
     running_count: Arc<tokio::sync::Semaphore>,
-}
-
-/// Control message for scheduler
-enum ControlMessage {
-    /// Schedule a task
-    Schedule(Task),
-    
-    /// Cancel a task
-    Cancel(String),
-    
-    /// Shutdown the scheduler
-    Shutdown,
 }
 
 impl TaskScheduler {
@@ -284,13 +284,13 @@ impl TaskScheduler {
         
         // Start the scheduler loop
         let config = self.config.clone();
-        let queues = self.queues.clone();
-        let running = self.running.clone();
-        let task_metadata = self.task_metadata.clone();
-        let recurring_tasks = self.recurring_tasks.clone();
-        let control_rx = self.control_rx.clone();
-        let running_flag = self.running_flag.clone();
-        let running_count = self.running_count.clone();
+        let queues = Arc::clone(&self.queues);
+        let running = Arc::clone(&self.running);
+        let task_metadata = Arc::clone(&self.task_metadata);
+        let recurring_tasks = Arc::clone(&self.recurring_tasks);
+        let control_rx = Arc::clone(&self.control_rx);
+        let running_flag = Arc::clone(&self.running_flag);
+        let running_count = Arc::clone(&self.running_count);
         
         tokio::spawn(async move {
             info!("Task scheduler started");
@@ -314,7 +314,7 @@ impl TaskScheduler {
                             &queues,
                             &running,
                             &task_metadata,
-                            &running_count,
+                            running_count.clone(),
                         ).await;
                         
                         // Check for recurring tasks
@@ -323,7 +323,7 @@ impl TaskScheduler {
                             &recurring_tasks,
                             &queues,
                             &task_metadata,
-                            &running_count,
+                            running_count.clone(),
                         ).await;
                     }
                     Some(msg) = control_guard.recv() => {
@@ -419,7 +419,7 @@ impl TaskScheduler {
         });
         
         // Create oneshot channel for completion notification
-        let (tx, rx) = oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         
         let task = Task {
             metadata: metadata.clone(),
@@ -436,7 +436,7 @@ impl TaskScheduler {
         
         // Send schedule message
         self.control_tx.send(ControlMessage::Schedule(task)).await
-            .map_err(|_| StorageNodeError::Internal("Failed to send task schedule message".to_string()))?;
+            .map_err(|_| StorageNodeError::Internal)?;
             
         // Return the task ID
         Ok(task_id)
@@ -458,28 +458,42 @@ impl TaskScheduler {
         self.wait_for_task(&task_id).await
     }
     
-        /// Cancel a task by ID
+    /// Cancel a task by ID
     pub async fn cancel(&self, task_id: String) -> Result<()> {
         self.control_tx.send(ControlMessage::Cancel(task_id.to_string())).await
-            .map_err(|_| StorageNodeError::Internal("Failed to send task cancel message".to_string()))?;
+            .map_err(|_| StorageNodeError::Internal)?;
             
         Ok(())
     }
     
     /// Wait for a task to complete
     pub async fn wait_for_task(&self, task_id: &str) -> Result<()> {
-        let metadata_guard = self.task_metadata.read().await;
-        let metadata = metadata_guard.get(task_id).ok_or_else(|| {
-            StorageNodeError::NotFound(format!("Task {} not found", task_id))
-        })?;
-        
-        let state = metadata.state;
-        drop(metadata_guard);
+        // Create a scope to limit the lifetime of the read guard
+        let state = {
+            let metadata_guard = self.task_metadata.read().await;
+            let metadata = metadata_guard.get(task_id).ok_or_else(|| {
+                StorageNodeError::NotFound(format!("Task {} not found", task_id))
+            })?;
+            
+            metadata.state
+        };
         
         match state {
             TaskState::Completed => Ok(()),
-            TaskState::Failed => Err(StorageNodeError::Internal(format!("Task {} failed", task_id))),
-            TaskState::Cancelled => Err(StorageNodeError::Internal(format!("Task {} was cancelled", task_id))),
+            TaskState::Failed => {
+                // Get error message in a separate scope
+                let error_message = {
+                    let metadata_guard = self.task_metadata.read().await;
+                    metadata_guard.get(task_id)
+                        .and_then(|m| m.error_message.clone())
+                        .unwrap_or_else(|| "Unknown error".to_string())
+                };
+                
+                Err(StorageNodeError::TaskFailed(error_message))
+            },
+            TaskState::Cancelled => {
+                Err(StorageNodeError::TaskCancelled(format!("Task {} was cancelled", task_id)))
+            },
             _ => {
                 // Create a channel to wait for completion
                 let (tx, rx) = oneshot::channel();
@@ -523,7 +537,7 @@ impl TaskScheduler {
     /// Shutdown the scheduler
     pub async fn shutdown(&self) -> Result<()> {
         self.control_tx.send(ControlMessage::Shutdown).await
-            .map_err(|_| StorageNodeError::Internal("Failed to send shutdown message".to_string()))?;
+            .map_err(|_| StorageNodeError::Internal)?;
             
         // Wait for the running flag to be set to false
         loop {
@@ -552,9 +566,14 @@ impl TaskScheduler {
     }
     
     /// Get task metadata
-    pub async fn get_task_metadata(&self, task_id: &str) -> Option<TaskMetadata> {
-        let metadata = self.task_metadata.read().await;
-        metadata.get(task_id).cloned()
+    pub fn get_task_metadata(&self, task_id: &str) -> impl Future<Output = Option<TaskMetadata>> {
+        let task_metadata = Arc::clone(&self.task_metadata);
+        let task_id = task_id.to_string();
+        
+        async move {
+            let metadata = task_metadata.read().await;
+            metadata.get(&task_id).cloned()
+        }
     }
     
     /// Get all task metadata
@@ -576,7 +595,7 @@ impl TaskScheduler {
             &self.queues,
             &self.running,
             &self.task_metadata,
-            &self.running_count
+            Arc::clone(&self.running_count)
         ).await;
         Ok(())
     }
@@ -588,7 +607,7 @@ impl TaskScheduler {
             &self.recurring_tasks,
             &self.queues,
             &self.task_metadata,
-            &self.running_count
+            Arc::clone(&self.running_count)
         ).await;
         Ok(())
     }
@@ -617,13 +636,13 @@ impl TaskScheduler {
     /// Internal implementation of process_scheduled_tasks
     async fn process_scheduled_tasks_impl(
         config: &TaskSchedulerConfig,
-        queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
-        running: &Mutex<HashMap<String, JoinHandle<Result<()>>>>,
-        task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
-        running_count: &tokio::sync::Semaphore,
+        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
+        running: &Arc<Mutex<HashMap<String, JoinHandle<Result<()>>>>>,
+        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        running_count: Arc<tokio::sync::Semaphore>,
     ) {
-        // Check if we can run more tasks
-        let permit = match running_count.try_acquire() {
+        // Use try_acquire_owned to get a permit we can move into the async block
+        let permit = match running_count.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => return, // At max concurrency
         };
@@ -632,30 +651,34 @@ impl TaskScheduler {
         let task = {
             let mut queues_guard = queues.lock().await;
             
-            // Check queues in priority order
+            let mut found_task = None;
             for priority in [TaskPriority::Critical, TaskPriority::High, TaskPriority::Normal, TaskPriority::Low].iter() {
                 if let Some(queue) = queues_guard.get_mut(priority) {
                     if let Some(task) = queue.pop_front() {
-                        // Found a task
-                        return Some(task);
+                        found_task = Some(task);
+                        break;
                     }
                 }
             }
             
-            None
+            found_task
         };
         
-        // If no task found, release the permit and return
         let task = match task {
             Some(task) => task,
             None => {
-                drop(permit);
+                // Drop the permit if no task is found
                 return;
             }
         };
         
-        // Update task metadata
+        // Explicitly clone these before moving them into the future
         let task_id = task.metadata.id.clone();
+        let action = task.action;
+        let notify = task.notify;
+        let metrics_callback = task.metrics_callback;
+        
+        // Update the metadata to show task is running
         {
             let mut metadata_guard = task_metadata.write().await;
             if let Some(metadata) = metadata_guard.get_mut(&task_id) {
@@ -664,51 +687,49 @@ impl TaskScheduler {
             }
         }
         
-        // Create task future
-        let action = task.action;
-        let notify = task.notify;
-        let metrics_callback = task.metrics_callback;
-        
-        // Create timeout future
         let timeout_duration = Duration::from_secs(config.default_timeout_seconds);
         
-        // Spawn the task
+        // Create explicit ownership paths for all async contexts
+        let task_id_for_future = task_id.clone();
+        let task_id_for_completion = task_id.clone();
+        
+        // Create a task future that can be spawned with its own dedicated task_id
         let task_future = async move {
             let start_time = Instant::now();
             
-            // Keep the permit until the task completes
+            // RAII guard for the semaphore permit
             let _permit = permit;
             
-            // Run the task with timeout
-            let result = tokio::time::timeout(timeout_duration, (action)()).await;
+            // Execute the task with timeout
+            let result = match tokio::time::timeout(timeout_duration, (action)()).await {
+                Ok(task_result) => task_result,
+                Err(_) => Err(StorageNodeError::Timeout),
+            };
             
             let duration_ms = start_time.elapsed().as_millis() as u64;
             
-            // Process result
-            let final_result = match result {
-                Ok(task_result) => task_result,
-                Err(_) => Err(StorageNodeError::Timeout(format!("Task {} timed out after {}s", task_id, config.default_timeout_seconds))),
-            };
+            // Clone the result for the notification
+            let result_for_notify = result.clone();
             
-            // Send completion notification
+            // Notify completion if channel is available
             if let Some(notify) = notify {
-                let _ = notify.send(final_result.clone());
+                let _ = notify.send(result_for_notify);
             }
             
-            // Call metrics callback
+            // Call metrics callback if provided
             if let Some(callback) = metrics_callback {
                 let metrics = TaskMetrics {
-                    id: task_id.clone(),
-                    success: final_result.is_ok(),
+                    id: task_id_for_future.clone(),
+                    success: result.is_ok(),
                     duration_ms,
-                    retry_count: 0, // Not tracking retries here
-                    error_message: final_result.err().map(|e| e.to_string()),
+                    retry_count: 0,
+                    error_message: result.as_ref().err().map(|e| e.to_string()),
                 };
                 
                 callback(metrics);
             }
             
-            final_result
+            result
         };
         
         // Spawn the task
@@ -720,45 +741,50 @@ impl TaskScheduler {
             running_guard.insert(task_id.clone(), handle);
         }
         
-        // Create task completion checker
-        let running_clone = running.clone();
-        let task_metadata_clone = task_metadata.clone();
-        
-        tokio::spawn(async move {
-            // This task monitors the completion of the scheduled task
-            let result = {
-                let mut running_guard = running_clone.lock().await;
-                if let Some(handle) = running_guard.get(&task_id) {
-                    handle.await
-                } else {
-                    return; // Task already completed or cancelled
-                }
-            };
+        // Spawn a task to handle completion - using dedicated task_id clone
+        tokio::spawn({
+            // Use pre-bifurcated task_id to avoid post-move borrow 
+            // Clone the Arc references for the completion watcher
+            let running = running.clone();
+            let task_metadata = task_metadata.clone();
             
-            // Task completed, remove from running
-            let mut running_guard = running_clone.lock().await;
-            running_guard.remove(&task_id);
-            
-            // Update metadata
-            let mut metadata_guard = task_metadata_clone.write().await;
-            if let Some(metadata) = metadata_guard.get_mut(&task_id) {
-                metadata.completed_at = Some(Instant::now());
+            async move {
+                // Handle running tasks in a scoped environment to limit variable lifetimes
+                let handle_result = {
+                    // Get and immediately remove the handle to avoid double borrow
+                    let handle_opt = {
+                        let mut running_guard = running.lock().await;
+                        running_guard.remove(&task_id_for_completion)
+                    };
+                    
+                    // Execute the handle if found
+                    match handle_opt {
+                        Some(handle) => handle.await,
+                        None => return, // Task was already removed or cancelled
+                    }
+                };
                 
-                match result {
-                    Ok(task_result) => {
-                        match task_result {
-                            Ok(_) => {
-                                metadata.state = TaskState::Completed;
-                            }
-                            Err(e) => {
-                                metadata.state = TaskState::Failed;
-                                metadata.error_message = Some(e.to_string());
+                // Update metadata with completion information
+                let mut metadata_guard = task_metadata.write().await;
+                if let Some(metadata) = metadata_guard.get_mut(&task_id_for_completion) {
+                    metadata.completed_at = Some(Instant::now());
+                    
+                    match handle_result {
+                        Ok(task_result) => {
+                            match task_result {
+                                Ok(_) => {
+                                    metadata.state = TaskState::Completed;
+                                }
+                                Err(e) => {
+                                    metadata.state = TaskState::Failed;
+                                    metadata.error_message = Some(e.to_string());
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        metadata.state = TaskState::Failed;
-                        metadata.error_message = Some(format!("Task panicked: {}", e));
+                        Err(e) => {
+                            metadata.state = TaskState::Failed;
+                            metadata.error_message = Some(format!("Task panicked: {}", e));
+                        }
                     }
                 }
             }
@@ -768,10 +794,10 @@ impl TaskScheduler {
     /// Internal implementation of process_recurring_tasks
     async fn process_recurring_tasks_impl(
         config: &TaskSchedulerConfig,
-        recurring_tasks: &Mutex<Vec<RecurringTaskDef>>,
-        queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
-        task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
-        running_count: &tokio::sync::Semaphore,
+        recurring_tasks: &Arc<Mutex<Vec<RecurringTaskDef>>>,
+        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
+        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
+        _running_count: Arc<tokio::sync::Semaphore>,
     ) {
         let now = Instant::now();
         let mut tasks_to_schedule = Vec::new();
@@ -795,21 +821,22 @@ impl TaskScheduler {
             }
         }
         
-        // Schedule tasks
+        // Schedule tasks in batches to avoid long lock holding
         if !tasks_to_schedule.is_empty() {
             let mut queues_guard = queues.lock().await;
             
             for (priority, task) in tasks_to_schedule {
                 let metadata = task.metadata.clone();
+                let task_id = metadata.id.clone(); // Preemptive clone to avoid ownership issues
                 
                 // Register metadata
                 {
                     let mut metadata_guard = task_metadata.write().await;
-                    metadata_guard.insert(metadata.id.clone(), metadata);
+                    metadata_guard.insert(task_id.clone(), metadata);
                 }
                 
                 // Add to queue
-                let queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
+                let mut queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
                 
                 // Check queue size
                 if queue.len() >= config.max_queue_size {
@@ -825,15 +852,62 @@ impl TaskScheduler {
                                 continue;
                             }
                             
-                            // Remove a task from the lowest priority queue
-                            let lowest_queue = queues_guard.get_mut(&TaskPriority::Low);
-                            if let Some(q) = lowest_queue {
-                                let _ = q.pop_back();
+                            // We need to temporarily release our mutable borrow on the queue
+                            // to avoid multiple mutable borrows
+                            
+                            // Drop the queue reference
+                            // Explicitly drop the mutable borrow by ending its scope
+                            drop(queue);
+                            
+                            // Now, try to remove a task from the lowest priority queue
+                            if let Some(q) = queues_guard.get_mut(&TaskPriority::Low) {
+                                if let Some(dropped_task) = q.pop_back() {
+                                    // Extract the data we need from the dropped task with ownership
+                                    let dropped_id = dropped_task.metadata.id.clone();
+                                    let dropped_notify = dropped_task.notify;
+                                    
+                                    // Mark dropped task as cancelled
+                                    {
+                                        let mut metadata_guard = task_metadata.write().await;
+                                        if let Some(metadata) = metadata_guard.get_mut(&dropped_id) {
+                                            metadata.state = TaskState::Cancelled;
+                                            metadata.completed_at = Some(Instant::now());
+                                            metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                                        }
+                                    }
+                                    
+                                    // Notify dropped task cancelled
+                                    if let Some(notify) = dropped_notify {
+                                        let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
+                                    }
+                                }
                             }
+                            
+                            // Re-acquire our queue reference
+                            queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
                         }
                         OverflowPolicy::DropOldest => {
                             // Remove the oldest task from this queue
-                            let _ = queue.pop_back();
+                            if let Some(dropped_task) = queue.pop_back() {
+                                // Extract the data we need from the dropped task with ownership
+                                let dropped_id = dropped_task.metadata.id.clone();
+                                let dropped_notify = dropped_task.notify;
+                                
+                                // Mark dropped task as cancelled
+                                {
+                                    let mut metadata_guard = task_metadata.write().await;
+                                    if let Some(metadata) = metadata_guard.get_mut(&dropped_id) {
+                                        metadata.state = TaskState::Cancelled;
+                                        metadata.completed_at = Some(Instant::now());
+                                        metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                                    }
+                                }
+                                
+                                // Notify dropped task cancelled
+                                if let Some(notify) = dropped_notify {
+                                    let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
+                                }
+                            }
                         }
                     }
                 }
@@ -846,8 +920,8 @@ impl TaskScheduler {
     /// Internal implementation of handle_schedule
     async fn handle_schedule_impl(
         config: &TaskSchedulerConfig,
-        queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
-        task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
+        queues: &Arc<Mutex<HashMap<TaskPriority, VecDeque<Task>>>>,
+        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
         task: Task,
     ) {
         let priority = task.metadata.priority;
@@ -855,7 +929,7 @@ impl TaskScheduler {
         
         // Add to queue
         let mut queues_guard = queues.lock().await;
-        let queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
+        let mut queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
         
         // Check queue size
         if queue.len() >= config.max_queue_size {
@@ -895,38 +969,56 @@ impl TaskScheduler {
                         return;
                     }
                     
-                    // Remove a task from the lowest priority queue
-                    let lowest_queue = queues_guard.get_mut(&TaskPriority::Low);
-                    if let Some(q) = lowest_queue {
+                    // We need to temporarily release our mutable borrow on the queue
+                    // to avoid multiple mutable borrows
+                    drop(queue);
+                    
+                    // Now, try to remove a task from the lowest priority queue
+                    if let Some(q) = queues_guard.get_mut(&TaskPriority::Low) {
                         if let Some(dropped_task) = q.pop_back() {
+                            // Extract the data we need from the dropped task
+                            let dropped_id = dropped_task.metadata.id.clone();
+                            let dropped_notify = dropped_task.notify;
+                            
                             // Mark dropped task as cancelled
-                            let mut metadata_guard = task_metadata.write().await;
-                            if let Some(metadata) = metadata_guard.get_mut(&dropped_task.metadata.id) {
-                                metadata.state = TaskState::Cancelled;
-                                metadata.completed_at = Some(Instant::now());
-                                metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                            {
+                                let mut metadata_guard = task_metadata.write().await;
+                                if let Some(metadata) = metadata_guard.get_mut(&dropped_id) {
+                                    metadata.state = TaskState::Cancelled;
+                                    metadata.completed_at = Some(Instant::now());
+                                    metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                                }
                             }
                             
                             // Notify dropped task cancelled
-                            if let Some(notify) = dropped_task.notify {
+                            if let Some(notify) = dropped_notify {
                                 let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
                             }
                         }
                     }
+                    
+                    // Re-acquire our queue reference
+                    queue = queues_guard.entry(priority).or_insert_with(VecDeque::new);
                 }
                 OverflowPolicy::DropOldest => {
                     // Remove the oldest task from this queue
                     if let Some(dropped_task) = queue.pop_back() {
+                        // Extract the data we need from the dropped task
+                        let dropped_id = dropped_task.metadata.id.clone();
+                        let dropped_notify = dropped_task.notify;
+                        
                         // Mark dropped task as cancelled
-                        let mut metadata_guard = task_metadata.write().await;
-                        if let Some(metadata) = metadata_guard.get_mut(&dropped_task.metadata.id) {
-                            metadata.state = TaskState::Cancelled;
-                            metadata.completed_at = Some(Instant::now());
-                            metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                        {
+                            let mut metadata_guard = task_metadata.write().await;
+                            if let Some(metadata) = metadata_guard.get_mut(&dropped_id) {
+                                metadata.state = TaskState::Cancelled;
+                                metadata.completed_at = Some(Instant::now());
+                                metadata.error_message = Some("Task dropped due to queue overflow".to_string());
+                            }
                         }
                         
                         // Notify dropped task cancelled
-                        if let Some(notify) = dropped_task.notify {
+                        if let Some(notify) = dropped_notify {
                             let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
                         }
                     }
@@ -946,13 +1038,18 @@ impl TaskScheduler {
     
     /// Internal implementation of handle_cancel
     async fn handle_cancel_impl(
-        running: &Mutex<HashMap<String, JoinHandle<Result<()>>>>,
-        task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
+        running: &Arc<Mutex<HashMap<String, JoinHandle<Result<()>>>>>,
+        task_metadata: &Arc<RwLock<HashMap<String, TaskMetadata>>>,
         task_id: &str,
     ) {
         // Cancel running task
-        let mut running_guard = running.lock().await;
-        if let Some(handle) = running_guard.remove(task_id) {
+        let handle_opt = {
+            let mut running_guard = running.lock().await;
+            running_guard.remove(task_id)
+        };
+        
+        // Abort the handle if found
+        if let Some(handle) = handle_opt {
             handle.abort();
         }
         
@@ -966,14 +1063,15 @@ impl TaskScheduler {
     
     /// Watch for task completion
     async fn watch_task(&self, task_id: &str, tx: oneshot::Sender<Result<()>>) -> Result<()> {
-        // Check if task already completed
-        let metadata_guard = self.task_metadata.read().await;
-        let metadata = metadata_guard.get(task_id).ok_or_else(|| {
-            StorageNodeError::NotFound(format!("Task {} not found", task_id))
-        })?;
-        
-        let state = metadata.state;
-        drop(metadata_guard);
+        // Check if task already completed - use scoped reads
+        let (state, error_message) = {
+            let metadata_guard = self.task_metadata.read().await;
+            let metadata = metadata_guard.get(task_id).ok_or_else(|| {
+                StorageNodeError::NotFound(format!("Task {} not found", task_id))
+            })?;
+            
+            (metadata.state, metadata.error_message.clone())
+        };
         
         match state {
             TaskState::Completed => {
@@ -981,11 +1079,8 @@ impl TaskScheduler {
                 return Ok(());
             }
             TaskState::Failed => {
-                let error_message = metadata_guard.get(task_id)
-                    .and_then(|m| m.error_message.clone())
-                    .unwrap_or_else(|| "Unknown error".to_string());
-                    
-                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_message)));
+                let error_msg = error_message.unwrap_or_else(|| "Unknown error".to_string());
+                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_msg)));
                 return Ok(());
             }
             TaskState::Cancelled => {
@@ -994,7 +1089,7 @@ impl TaskScheduler {
             }
             _ => {
                 // Task still running or queued, set up a watcher
-                let task_metadata = self.task_metadata.clone();
+                let task_metadata = Arc::clone(&self.task_metadata);
                 let task_id_owned = task_id.to_string();
                 
                 tokio::spawn(async move {
@@ -1003,23 +1098,25 @@ impl TaskScheduler {
                         // Sleep a bit to avoid tight loop
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         
-                        // Check status
-                        let metadata_guard = task_metadata.read().await;
-                        let metadata = match metadata_guard.get(&task_id_owned) {
-                            Some(m) => m,
-                            None => break, // Task no longer exists
+                        // Use scoped read to avoid holding the lock across await points
+                        let (state, error_message) = {
+                            let metadata_guard = task_metadata.read().await;
+                            let metadata = match metadata_guard.get(&task_id_owned) {
+                                Some(m) => m,
+                                None => break, // Task no longer exists
+                            };
+                            
+                            (metadata.state, metadata.error_message.clone())
                         };
                         
-                        match metadata.state {
+                        match state {
                             TaskState::Completed => {
                                 let _ = tx.send(Ok(()));
                                 break;
                             }
                             TaskState::Failed => {
-                                let error_message = metadata.error_message.clone()
-                                    .unwrap_or_else(|| "Unknown error".to_string());
-                                    
-                                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_message)));
+                                let error_msg = error_message.unwrap_or_else(|| "Unknown error".to_string());
+                                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_msg)));
                                 break;
                             }
                             TaskState::Cancelled => {
@@ -1030,8 +1127,6 @@ impl TaskScheduler {
                                 // Still running or queued, continue polling
                             }
                         }
-                        
-                        drop(metadata_guard);
                     }
                 });
                 
@@ -1407,7 +1502,7 @@ mod tests {
         scheduler.wait_for_task(&task_id).await.unwrap();
         
         // Check task metadata
-        let metadata = scheduler.get_task_metadata(&task_id).unwrap();
+        let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
         assert_eq!(metadata.state, TaskState::Completed);
         
         // Shutdown scheduler
@@ -1447,7 +1542,7 @@ mod tests {
         scheduler.wait_for_task(&task_id).await.unwrap();
         
         // Check task metadata
-        let metadata = scheduler.get_task_metadata(&task_id).unwrap();
+        let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
         assert_eq!(metadata.state, TaskState::Completed);
         
         // Shutdown scheduler
