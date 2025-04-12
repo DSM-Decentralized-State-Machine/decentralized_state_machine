@@ -5,12 +5,23 @@
 
 use crate::error::Result;
 use crate::storage::vector_clock::VectorClock;
-use crate::storage::epidemic_storage::EpidemicEntry;
+// Forward declaration of the EpidemicEntry type we'll define
+#[derive(Debug, Clone)]
+pub struct EpidemicEntry {
+    pub entry: crate::types::BlindedStateEntry,
+    pub vector_clock: VectorClock,
+    pub last_modified: u64,
+    pub last_sync: u64,
+    pub received_from: Option<String>,
+    pub propagation_count: u32,
+    pub verification_count: u32,
+    pub origin_region: String,
+}
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use blake3::{Hash, Hasher};
+use blake3::Hasher;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug};
 
 /// A compact representation of an entry for digest generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +62,7 @@ pub struct StorageDigest {
 }
 
 /// Type of digest
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum DigestType {
     /// Full digest contains all entries
     Full,
@@ -529,9 +540,7 @@ impl DigestGenerator {
     pub fn serialize_digest(&self, digest: &StorageDigest) -> Result<Vec<u8>> {
         bincode::serialize(digest)
             .map_err(|e| {
-                crate::error::StorageNodeError::Serialization {
-                    context: format!("Failed to serialize digest: {}", e),
-                }
+                crate::error::StorageNodeError::Serialization(format!("Failed to serialize digest: {}", e))
             })
     }
     
@@ -539,9 +548,7 @@ impl DigestGenerator {
     pub fn deserialize_digest(&self, bytes: &[u8]) -> Result<StorageDigest> {
         bincode::deserialize(bytes)
             .map_err(|e| {
-                crate::error::StorageNodeError::Deserialization {
-                    context: format!("Failed to deserialize digest: {}", e),
-                }
+                crate::error::StorageNodeError::Serialization(format!("Failed to deserialize digest: {}", e))
             })
     }
 }
@@ -618,7 +625,7 @@ impl DigestRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::epidemic_storage::EpidemicEntry;
+    use crate::storage::digest::EpidemicEntry;
     use crate::types::BlindedStateEntry;
     use std::collections::HashMap;
     
@@ -692,7 +699,7 @@ mod tests {
         let generator = DigestGenerator::new("test-node".to_string(), "test-region".to_string());
         
         // Create first set of entries
-        let entries1 = vec![
+        let mut entries1 = vec![
             create_test_entry("entry1", vec![1, 2, 3], "node1", 1),
             create_test_entry("entry2", vec![4, 5, 6], "node2", 1),
             create_test_entry("common", vec![7, 8, 9], "node3", 1),

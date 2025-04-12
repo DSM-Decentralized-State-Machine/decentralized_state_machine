@@ -4,7 +4,7 @@
 // the epidemic storage system, enabling detailed performance monitoring
 // and optimization.
 
-use crate::storage::small_world::NodeId;
+
 use crate::types::NodeStatus;
 
 use dashmap::DashMap;
@@ -861,7 +861,7 @@ impl MetricsCollector {
         let collector = Self {
             node_id,
             start_time: Instant::now(),
-            config,
+            config: config.clone(),
             operation_metrics: DashMap::new(),
             node_metrics: DashMap::new(),
             key_metrics: DashMap::new(),
@@ -1134,6 +1134,7 @@ impl MetricsCollector {
         outcome: OperationOutcome,
         latency_us: u64,
     ) {
+        let _ = operation_type;
         // Get or create node metrics
         let mut entry = self.node_metrics.entry(node_id.to_string())
             .or_insert_with(|| NodeMetrics {

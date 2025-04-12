@@ -139,7 +139,7 @@ impl std::fmt::Display for NodeId {
 }
 
 /// Small-world network topology
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SmallWorldTopology {
     /// The ID of the local node
     self_id: NodeId,

@@ -3,6 +3,7 @@
 // This module implements the HTTP API for the storage node
 
 use crate::error::{Result, StorageNodeError};
+use crate::staking::StakingService;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -15,13 +16,24 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 mod handlers;
-mod unilateral;
-mod vault;
 mod middleware;
+mod rewards_api;
+mod unilateral_api;
+mod vault_api;
 
 pub use handlers::*;
-pub use unilateral::*;
-pub use vault::*;
+pub use rewards_api::*;
+pub use unilateral_api::*;
+pub use vault_api::*;
+
+/// Application state shared with all routes
+#[derive(Clone)]
+pub struct AppState {
+    /// Storage engine
+    pub storage: Arc<dyn crate::storage::StorageEngine + Send + Sync>,
+    /// Staking service
+    pub staking_service: Arc<StakingService>,
+}
 
 /// API Error response
 #[derive(Debug, Serialize)]
@@ -93,8 +105,8 @@ impl From<StorageNodeError> for ApiError {
 
 /// API Server
 pub struct ApiServer {
-    /// Storage engine
-    storage: Arc<dyn crate::storage::StorageEngine + Send + Sync>,
+    /// Application state
+    app_state: Arc<AppState>,
     /// Server bind address
     bind_address: String,
 }
@@ -103,10 +115,16 @@ impl ApiServer {
     /// Create a new API server
     pub fn new(
         storage: Arc<dyn crate::storage::StorageEngine + Send + Sync>,
+        staking_service: Arc<StakingService>,
         bind_address: String,
     ) -> Self {
-        Self {
+        let app_state = Arc::new(AppState {
             storage,
+            staking_service,
+        });
+        
+        Self {
+            app_state,
             bind_address,
         }
     }
@@ -135,7 +153,7 @@ impl ApiServer {
 
     /// Create the API router
     fn create_router(&self) -> Router {
-        // We're using with_state instead of extensions
+        // Build the router
         Router::new()
             .route("/health", get(handlers::health_check))
             .route("/stats", get(handlers::node_stats))
@@ -146,27 +164,30 @@ impl ApiServer {
             .route("/data/:blinded_id/exists", get(handlers::exists_data))
             .route("/data", get(handlers::list_data))
             // Unilateral transaction inbox
-            .route("/inbox", post(unilateral::store_inbox_entry))
+            .route("/inbox", post(store_inbox_entry))
             .route(
                 "/inbox/:recipient_genesis",
-                get(unilateral::get_inbox_entries),
+                get(get_inbox_entries),
             )
             .route(
                 "/inbox/:recipient_genesis/:entry_id",
-                delete(unilateral::delete_inbox_entry),
+                delete(delete_inbox_entry),
             )
-            // Vault API
-            .route("/vault", post(vault::store_vault))
-            .route("/vault/:vault_id", get(vault::get_vault))
+            // Vault API  
+            .route("/vault", post(store_vault))
+            .route("/vault/:vault_id", get(get_vault))
             .route(
                 "/vault/creator/:creator_id",
-                get(vault::get_vaults_by_creator),
+                get(get_vaults_by_creator),
             )
             .route(
                 "/vault/recipient/:recipient_id",
-                get(vault::get_vaults_by_recipient),
+                get(get_vaults_by_recipient),
             )
-            .route("/vault/:vault_id/status", put(vault::update_vault_status))
-            .with_state(self.storage.clone())
+            .route("/vault/:vault_id/status", put(update_vault_status))
+            // Rewards API
+            .merge(rewards_api::rewards_routes())
+            // Share application state
+            .with_state(self.app_state.clone())
     }
 }

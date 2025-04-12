@@ -2,8 +2,8 @@
 //
 // This module implements the API route handlers for the storage node.
 
+use crate::api::AppState;
 use crate::error::{Result, StorageNodeError};
-use crate::storage::StorageEngine;
 use crate::types::storage_types::{DataRetrievalRequest, DataSubmissionRequest};
 use crate::types::BlindedStateEntry;
 use axum::{
@@ -18,7 +18,7 @@ use tracing::{debug, info};
 /// Store data handler
 #[axum::debug_handler]
 pub async fn store_data(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<DataSubmissionRequest>,
 ) -> Result<impl IntoResponse> {
     info!("Storing data with blinded ID: {}", request.blinded_id);
@@ -60,7 +60,7 @@ pub async fn store_data(
     };
 
     // Store entry
-    let response = storage.store(entry).await?;
+    let response = state.storage.store(entry).await?;
 
     Ok((StatusCode::OK, Json(response)))
 }
@@ -68,7 +68,7 @@ pub async fn store_data(
 /// Retrieve data handler
 #[axum::debug_handler]
 pub async fn retrieve_data(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(blinded_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -86,7 +86,7 @@ pub async fn retrieve_data(
     };
 
     // Retrieve entry
-    let entry = storage.retrieve(&request.blinded_id).await?;
+    let entry = state.storage.retrieve(&request.blinded_id).await?;
 
     match entry {
         Some(entry) => {
@@ -106,7 +106,7 @@ pub async fn retrieve_data(
 /// Delete data handler
 #[axum::debug_handler]
 pub async fn delete_data(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(blinded_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -118,7 +118,7 @@ pub async fn delete_data(
     // TODO: Verify signature if provided
 
     // Delete entry
-    let deleted = storage.delete(&blinded_id).await?;
+    let deleted = state.storage.delete(&blinded_id).await?;
 
     if deleted {
         debug!("Entry deleted with ID: {}", blinded_id);
@@ -141,13 +141,13 @@ pub async fn delete_data(
 /// Check if data exists handler
 #[axum::debug_handler]
 pub async fn exists_data(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(blinded_id): Path<String>,
 ) -> Result<impl IntoResponse> {
     debug!("Checking if data exists with blinded ID: {}", blinded_id);
 
     // Check if entry exists
-    let exists = storage.exists(&blinded_id).await?;
+    let exists = state.storage.exists(&blinded_id).await?;
 
     Ok((
         StatusCode::OK,
@@ -160,7 +160,7 @@ pub async fn exists_data(
 /// List data handler
 #[axum::debug_handler]
 pub async fn list_data(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
     // Parse query parameters
@@ -170,7 +170,7 @@ pub async fn list_data(
     debug!("Listing data with limit: {:?}, offset: {:?}", limit, offset);
 
     // List entries
-    let entries = storage.list(limit, offset).await?;
+    let entries = state.storage.list(limit, offset).await?;
 
     Ok((
         StatusCode::OK,
@@ -186,12 +186,15 @@ pub async fn list_data(
 /// Get node stats handler
 #[axum::debug_handler]
 pub async fn node_stats(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse> {
     debug!("Getting node stats");
 
     // Get storage stats
-    let stats = storage.get_stats().await?;
+    let stats = state.storage.get_stats().await?;
+
+    // Get staking status
+    let staking_status = state.staking_service.get_status().await?;
 
     // Get DSM version
     let dsm_version = dsm::version();
@@ -205,6 +208,14 @@ pub async fn node_stats(
         StatusCode::OK,
         Json(serde_json::json!({
             "storage": stats,
+            "staking": {
+                "enabled": staking_status.enabled,
+                "staked_amount": staking_status.staked_amount,
+                "pending_rewards": staking_status.pending_rewards,
+                "apy": staking_status.apy,
+                "reputation": staking_status.reputation,
+                "last_reward_time": staking_status.last_reward_time,
+            },
             "dsm_version": dsm_version,
             "uptime": 0, // TODO: Track uptime
             "timestamp": timestamp,

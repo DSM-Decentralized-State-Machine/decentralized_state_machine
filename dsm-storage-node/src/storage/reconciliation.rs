@@ -5,9 +5,8 @@
 // even under concurrent modifications and network partitions.
 
 use crate::error::{Result, StorageNodeError};
-
+use crate::storage::digest::EpidemicEntry;
 use crate::storage::vector_clock::{VectorClock, VectorClockRelation};
-
 
 use dashmap::DashMap;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -17,10 +16,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn, trace};
+use tracing::{error, info, warn};
 
 /// Conflict resolution policy
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConflictResolutionPolicy {
     /// Last-write-wins based on timestamp
     LastWriteWins,
@@ -301,9 +300,9 @@ impl ReconciliationEngine {
     /// Reconcile multiple entries to resolve conflicts
     pub async fn reconcile(&self, entries: Vec<EpidemicEntry>) -> Result<ReconciliationResult> {
         if entries.is_empty() {
-            return Err(StorageNodeError::InvalidArgument {
-                context: "Cannot reconcile empty entry list".to_string(),
-            });
+            return Err(StorageNodeError::Storage(
+                "Cannot reconcile empty entry list".to_string(),
+            ));
         }
         
         if entries.len() == 1 {
@@ -320,10 +319,8 @@ impl ReconciliationEngine {
         let blinded_id = entries[0].entry.blinded_id.clone();
         
         // Acquire semaphore to limit concurrent reconciliations
-        let _permit = self.semaphore.acquire().await.map_err(|e| {
-            StorageNodeError::Concurrency {
-                context: format!("Failed to acquire reconciliation semaphore: {}", e),
-            }
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            StorageNodeError::Internal
         })?;
         
         // Mark as in-progress
@@ -444,9 +441,9 @@ impl ReconciliationEngine {
                 
             Ok(result)
         } else {
-            Err(StorageNodeError::InvalidArgument {
-                context: "Empty entry list in LWW resolution".to_string(),
-            })
+            Err(StorageNodeError::Storage(
+                "Empty entry list in LWW resolution".to_string(),
+            ))
         }
     }
     
@@ -485,9 +482,9 @@ impl ReconciliationEngine {
                 
             Ok(result)
         } else {
-            Err(StorageNodeError::InvalidArgument {
-                context: "Empty entry list in vector clock coverage resolution".to_string(),
-            })
+            Err(StorageNodeError::Storage(
+                "Empty entry list in vector clock coverage resolution".to_string(),
+            ))
         }
     }
     
@@ -517,9 +514,9 @@ impl ReconciliationEngine {
                 
             Ok(result)
         } else {
-            Err(StorageNodeError::InvalidArgument {
-                context: "Empty entry list in priority resolution".to_string(),
-            })
+            Err(StorageNodeError::Storage(
+                "Empty entry list in priority resolution".to_string(),
+            ))
         }
     }
     
@@ -529,9 +526,9 @@ impl ReconciliationEngine {
         let base = context.entries
             .iter()
             .max_by_key(|e| e.entry.timestamp)
-            .ok_or_else(|| StorageNodeError::InvalidArgument {
-                context: "Empty entry list in deterministic merge".to_string(),
-            })?;
+            .ok_or_else(|| StorageNodeError::Storage(
+                "Empty entry list in deterministic merge".to_string(),
+            ))?;
         
         // Create a new merged entry
         let mut result = base.clone();
@@ -643,21 +640,21 @@ impl ReconciliationEngine {
     pub fn apply_delta(&self, base: &EpidemicEntry, delta: &EntryDelta) -> Result<EpidemicEntry> {
         // Verify delta applicability
         if base.entry.blinded_id != delta.blinded_id {
-            return Err(StorageNodeError::InvalidArgument {
-                context: format!(
+            return Err(StorageNodeError::Storage(
+                format!(
                     "Delta blinded_id {} doesn't match base {}",
                     delta.blinded_id, base.entry.blinded_id
                 ),
-            });
+            ));
         }
         
         // Verify vector clock compatibility
         if !delta.base_vector_clock.counters.iter().all(|(node, &count)| {
             base.vector_clock.get(node) >= count
         }) {
-            return Err(StorageNodeError::InvalidArgument {
-                context: "Delta base vector clock is not compatible with entry".to_string(),
-            });
+            return Err(StorageNodeError::Storage(
+                "Delta base vector clock is not compatible with entry".to_string(),
+            ));
         }
         
         // Create a new entry
@@ -697,11 +694,11 @@ pub struct ReconciliationProcessor {
     engine: Arc<ReconciliationEngine>,
     
     /// Inbound reconciliation requests
-    inbound_tx: Sender<(Vec<EpidemicEntry>, Sender<Result<ReconciliationResult>>)>,
+    inbound_tx: Sender<(Vec<EpidemicEntry>, tokio::sync::oneshot::Sender<Result<ReconciliationResult>>)>,
     
     /// Inbound receiver (held privately)
     #[allow(dead_code)]
-    inbound_rx: Receiver<(Vec<EpidemicEntry>, Sender<Result<ReconciliationResult>>)>,
+    inbound_rx: Receiver<(Vec<EpidemicEntry>, tokio::sync::oneshot::Sender<Result<ReconciliationResult>>)>,
     
     /// Maximum batch size
     max_batch_size: usize,
@@ -729,7 +726,7 @@ impl ReconciliationProcessor {
     }
     
     /// Get the request sender
-    pub fn get_sender(&self) -> Sender<(Vec<EpidemicEntry>, Sender<Result<ReconciliationResult>>)> {
+    pub fn get_sender(&self) -> Sender<(Vec<EpidemicEntry>, tokio::sync::oneshot::Sender<Result<ReconciliationResult>>)> {
         self.inbound_tx.clone()
     }
     
@@ -752,8 +749,8 @@ impl ReconciliationProcessor {
                         let engine_clone = engine.clone();
                         let task = async move {
                             let result = engine_clone.reconcile(entries).await;
-                            if let Err(e) = response_tx.send(result).await {
-                                error!("Failed to send reconciliation response: {}", e);
+                            if let Err(e) = response_tx.send(result) {
+                                error!("Failed to send reconciliation response: {:?}", e);
                             }
                         };
                         
@@ -794,16 +791,12 @@ impl ReconciliationProcessor {
         
         // Send the request
         self.inbound_tx.send((entries, tx)).await.map_err(|e| {
-            StorageNodeError::SendFailure {
-                context: format!("Failed to send reconciliation request: {}", e),
-            }
+            StorageNodeError::Network(format!("Failed to send reconciliation request: {}", e))
         })?;
         
         // Wait for the response
         rx.await.map_err(|e| {
-            StorageNodeError::ReceiveFailure {
-                context: format!("Failed to receive reconciliation response: {}", e),
-            }
+            StorageNodeError::Network(format!("Failed to receive reconciliation response: {}", e))
         })?
     }
 }
@@ -909,6 +902,8 @@ fn format_timestamp(timestamp: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::BlindedStateEntry;
+
     use super::*;
     use std::collections::HashMap;
     
@@ -968,7 +963,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_vector_clock_coverage() {
-        let mut engine = ReconciliationEngine::new(ConflictResolutionPolicy::HighestVectorClockCoverage);
+        let engine = ReconciliationEngine::new(ConflictResolutionPolicy::HighestVectorClockCoverage);
         
         // Create two entries: one with more vector clock entries
         let mut entry1 = create_test_entry("test1", vec![1, 2, 3], 100, "node1", 1);
@@ -1028,13 +1023,13 @@ mod tests {
         target.entry.metadata.insert("change".to_string(), "updated".to_string());
         source.entry.metadata.insert("change".to_string(), "original".to_string());
         
-                // Calculate delta operations
-                let delta_ops = engine.calculate_delta_operations(&source, &target);
-                
-                // Verify operations
-                assert!(delta_ops.contains(&DeltaOperation::SetValue(vec![4, 5, 6])));
-                assert!(delta_ops.contains(&DeltaOperation::DeleteMetadata("remove".to_string())));
-                assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("add".to_string(), "new".to_string())));
-                assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("change".to_string(), "updated".to_string())));
-            }
-        }
+        // Calculate delta operations
+        let delta_ops = engine.calculate_delta_operations(&source, &target);
+        
+        // Verify operations
+        assert!(delta_ops.contains(&DeltaOperation::SetValue(vec![4, 5, 6])));
+        assert!(delta_ops.contains(&DeltaOperation::DeleteMetadata("remove".to_string())));
+        assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("add".to_string(), "new".to_string())));
+        assert!(delta_ops.contains(&DeltaOperation::UpdateMetadata("change".to_string(), "updated".to_string())));
+    }
+}

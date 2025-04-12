@@ -3,7 +3,6 @@
 // This module implements efficient routing strategies for the small-world topology
 // to ensure optimal message delivery and request handling.
 
-use crate::error::Result;
 use crate::storage::small_world::{NodeId, SmallWorldTopology, Distance, calculate_key_hash};
 use crate::types::StorageNode;
 
@@ -11,7 +10,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, trace, warn};
+
 
 /// Routing table entry
 #[derive(Debug, Clone)]
@@ -569,6 +568,7 @@ impl EpidemicRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::small_world::SmallWorldConfig;
     
     #[test]
     fn test_routing_table() {

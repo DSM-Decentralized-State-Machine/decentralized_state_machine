@@ -782,7 +782,7 @@ impl PartitionManager {
         let mut regions: Vec<_> = region_metrics.iter().collect();
         
         // Sort regions by health metrics
-        regions.sort_by(|(region_a, metrics_a), (region_b, metrics_b)| {
+        regions.sort_by(|(_, metrics_a), (_, metrics_b)| {
             // Prefer regions with lower load relative to capacity
             let load_a = metrics_a.current_load as f64 / metrics_a.total_capacity as f64;
             let load_b = metrics_b.current_load as f64 / metrics_b.total_capacity as f64;
@@ -964,7 +964,7 @@ impl PartitionManager {
             
             // Filter out the primary from candidates
             let replica_candidates: Vec<_> = candidates.iter()
-                .filter(|n| **n != partition.primary)
+                .filter(|n| *(*n) != partition.primary)
                 .collect();
             
             for (i, candidate) in replica_candidates.iter().take(replicas_needed).enumerate() {
@@ -1036,7 +1036,7 @@ impl PartitionManager {
             total_bytes: partition.estimated_size,
             transferred_bytes: 0,
             bytes_per_second: 0.0,
-            priority: priority,
+            priority,
             retry_count: 0,
         };
 
@@ -1168,7 +1168,7 @@ impl PartitionManager {
             let partition = entry.value();
             
             // Ensure hash is converted to a compatible type for comparison
-            if partition_contains_hash(&partition.start, &partition.end, &hash) {
+            if Self::partition_contains_hash(&partition.start, &partition.end, &hash) {
                 return Ok(partition.clone());
             }
         }

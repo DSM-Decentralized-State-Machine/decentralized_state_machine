@@ -2,8 +2,8 @@
 //
 // This module implements API handlers for unilateral transaction inbox functionality.
 
+use crate::api::AppState;
 use crate::error::{Result, StorageNodeError};
-use crate::storage::StorageEngine;
 use crate::types::BlindedStateEntry;
 use axum::{
     extract::{Json, Path, Query, State},
@@ -53,7 +53,7 @@ pub struct InboxSubmission {
 /// Store an inbox entry
 #[axum::debug_handler]
 pub async fn store_inbox_entry(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Json(submission): Json<InboxSubmission>,
 ) -> Result<impl IntoResponse> {
     info!("Storing inbox entry: {}", submission.entry.id);
@@ -122,7 +122,7 @@ pub async fn store_inbox_entry(
     };
 
     // Store the entry
-    let response = storage.store(entry).await?;
+    let response = state.storage.store(entry).await?;
 
     Ok((StatusCode::OK, Json(response)))
 }
@@ -130,7 +130,7 @@ pub async fn store_inbox_entry(
 /// Get inbox entries for a recipient
 #[axum::debug_handler]
 pub async fn get_inbox_entries(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(recipient_genesis): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -151,7 +151,7 @@ pub async fn get_inbox_entries(
 
     // This requires a custom implementation in StorageEngine to list entries with a prefix
     // For now, we'll retrieve all entries and filter
-    let all_ids = storage.list(Some(limit + offset), None).await?;
+    let all_ids = state.storage.list(Some(limit + offset), None).await?;
 
     // Filter to only include entries for this recipient
     let inbox_ids: Vec<String> = all_ids
@@ -169,7 +169,7 @@ pub async fn get_inbox_entries(
     // Retrieve each entry
     let mut entries = Vec::new();
     for id in paginated_ids {
-        if let Some(entry) = storage.retrieve(&id).await? {
+        if let Some(entry) = state.storage.retrieve(&id).await? {
             // Deserialize the inbox entry
             if let Ok(inbox_entry) = bincode::deserialize::<InboxEntry>(&entry.encrypted_payload) {
                 entries.push(inbox_entry);
@@ -185,14 +185,14 @@ pub async fn get_inbox_entries(
 /// Delete an inbox entry
 #[axum::debug_handler]
 pub async fn delete_inbox_entry(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path((recipient_genesis, entry_id)): Path<(String, String)>,
 ) -> Result<impl IntoResponse> {
     let blinded_id = format!("inbox:{}:{}", recipient_genesis, entry_id);
     info!("Deleting inbox entry: {}", blinded_id);
 
     // Delete the entry
-    let deleted = storage.delete(&blinded_id).await?;
+    let deleted = state.storage.delete(&blinded_id).await?;
 
     if deleted {
         Ok((

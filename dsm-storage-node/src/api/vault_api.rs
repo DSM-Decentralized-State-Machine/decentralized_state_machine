@@ -2,8 +2,8 @@
 //
 // This module implements API handlers for Deterministic Limbo Vaults (DLVs).
 
+use crate::api::AppState;
 use crate::error::{Result, StorageNodeError};
-use crate::storage::StorageEngine;
 use crate::types::BlindedStateEntry;
 use axum::{
     extract::{Json, Path, Query, State},
@@ -90,7 +90,7 @@ pub struct VaultSubmission {
 /// Store a vault
 #[axum::debug_handler]
 pub async fn store_vault(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Json(submission): Json<VaultSubmission>,
 ) -> Result<impl IntoResponse> {
     info!("Storing vault: {}", submission.vault.id);
@@ -156,13 +156,13 @@ pub async fn store_vault(
     };
 
     // Store the entry
-    let response = storage.store(entry).await?;
+    let response = state.storage.store(entry).await?;
 
     // Also create an index entry for the creator
     let creator_index_id = format!("vault_by_creator:{}", submission.vault.creator_id);
 
     // Get existing vault IDs for this creator
-    let vault_ids = match storage.retrieve(&creator_index_id).await? {
+    let vault_ids = match state.storage.retrieve(&creator_index_id).await? {
         Some(entry) => {
             // Deserialize the list of vault IDs
             let mut ids: Vec<String> =
@@ -216,14 +216,14 @@ pub async fn store_vault(
     };
 
     // Store the creator index
-    storage.store(creator_index_entry).await?;
+    state.storage.store(creator_index_entry).await?;
 
     // If there's a recipient, also create an index for them
     if let Some(recipient_id) = &submission.vault.recipient_id {
         let recipient_index_id = format!("vault_by_recipient:{}", recipient_id);
 
         // Get existing vault IDs for this recipient
-        let vault_ids = match storage.retrieve(&recipient_index_id).await? {
+        let vault_ids = match state.storage.retrieve(&recipient_index_id).await? {
             Some(entry) => {
                 // Deserialize the list of vault IDs
                 let mut ids: Vec<String> =
@@ -277,7 +277,7 @@ pub async fn store_vault(
         };
 
         // Store the recipient index
-        storage.store(recipient_index_entry).await?;
+        state.storage.store(recipient_index_entry).await?;
     }
 
     Ok((StatusCode::OK, Json(response)))
@@ -286,14 +286,14 @@ pub async fn store_vault(
 /// Get a vault by ID
 #[axum::debug_handler]
 pub async fn get_vault(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(vault_id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let blinded_id = format!("vault:{}", vault_id);
     info!("Retrieving vault: {}", blinded_id);
 
     // Retrieve the vault
-    match storage.retrieve(&blinded_id).await? {
+    match state.storage.retrieve(&blinded_id).await? {
         Some(entry) => {
             // Deserialize the vault
             let vault: VaultData = bincode::deserialize(&entry.encrypted_payload).map_err(|e| {
@@ -312,7 +312,7 @@ pub async fn get_vault(
 /// Get vaults by creator ID
 #[axum::debug_handler]
 pub async fn get_vaults_by_creator(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(creator_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -326,7 +326,7 @@ pub async fn get_vaults_by_creator(
         .unwrap_or(100);
 
     // Retrieve the vault IDs
-    match storage.retrieve(&index_id).await? {
+    match state.storage.retrieve(&index_id).await? {
         Some(entry) => {
             // Deserialize the list of vault IDs
             let vault_ids: Vec<String> =
@@ -341,7 +341,7 @@ pub async fn get_vaults_by_creator(
             let mut vaults = Vec::new();
             for id in vault_ids.iter().take(limit) {
                 let blinded_id = format!("vault:{}", id);
-                if let Some(entry) = storage.retrieve(&blinded_id).await? {
+                if let Some(entry) = state.storage.retrieve(&blinded_id).await? {
                     // Deserialize the vault
                     match bincode::deserialize::<VaultData>(&entry.encrypted_payload) {
                         Ok(vault) => {
@@ -366,7 +366,7 @@ pub async fn get_vaults_by_creator(
 /// Get vaults by recipient ID
 #[axum::debug_handler]
 pub async fn get_vaults_by_recipient(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(recipient_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -380,7 +380,7 @@ pub async fn get_vaults_by_recipient(
         .unwrap_or(100);
 
     // Retrieve the vault IDs
-    match storage.retrieve(&index_id).await? {
+    match state.storage.retrieve(&index_id).await? {
         Some(entry) => {
             // Deserialize the list of vault IDs
             let vault_ids: Vec<String> =
@@ -395,7 +395,7 @@ pub async fn get_vaults_by_recipient(
             let mut vaults = Vec::new();
             for id in vault_ids.iter().take(limit) {
                 let blinded_id = format!("vault:{}", id);
-                if let Some(entry) = storage.retrieve(&blinded_id).await? {
+                if let Some(entry) = state.storage.retrieve(&blinded_id).await? {
                     // Deserialize the vault
                     match bincode::deserialize::<VaultData>(&entry.encrypted_payload) {
                         Ok(vault) => {
@@ -420,7 +420,7 @@ pub async fn get_vaults_by_recipient(
 /// Update a vault's status
 #[axum::debug_handler]
 pub async fn update_vault_status(
-    State(storage): State<Arc<dyn StorageEngine + Send + Sync>>,
+    State(state): State<Arc<AppState>>,
     Path(vault_id): Path<String>,
     Json(status_update): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<impl IntoResponse> {
@@ -428,7 +428,7 @@ pub async fn update_vault_status(
     info!("Updating vault status: {}", blinded_id);
 
     // Retrieve the vault
-    match storage.retrieve(&blinded_id).await? {
+    match state.storage.retrieve(&blinded_id).await? {
         Some(entry) => {
             // Deserialize the vault
             let mut vault: VaultData =
@@ -529,7 +529,7 @@ pub async fn update_vault_status(
                     metadata: entry.metadata,
                 };
 
-                storage.store(updated_entry).await?;
+                state.storage.store(updated_entry).await?;
 
                 Ok((StatusCode::OK, Json(vault)))
             } else {

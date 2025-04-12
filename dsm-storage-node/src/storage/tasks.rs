@@ -309,7 +309,7 @@ impl TaskScheduler {
                         drop(control_guard);
                         
                         // Check for scheduled tasks
-                        Self::process_scheduled_tasks(
+                        Self::process_scheduled_tasks_impl(
                             &config,
                             &queues,
                             &running,
@@ -318,7 +318,7 @@ impl TaskScheduler {
                         ).await;
                         
                         // Check for recurring tasks
-                        Self::process_recurring_tasks(
+                        Self::process_recurring_tasks_impl(
                             &config,
                             &recurring_tasks,
                             &queues,
@@ -329,7 +329,7 @@ impl TaskScheduler {
                     Some(msg) = control_guard.recv() => {
                         match msg {
                             ControlMessage::Schedule(task) => {
-                                Self::handle_schedule(
+                                Self::handle_schedule_impl(
                                     &config,
                                     &queues,
                                     &task_metadata,
@@ -337,7 +337,7 @@ impl TaskScheduler {
                                 ).await;
                             }
                             ControlMessage::Cancel(task_id) => {
-                                Self::handle_cancel(
+                                Self::handle_cancel_impl(
                                     &running,
                                     &task_metadata,
                                     &task_id,
@@ -436,9 +436,7 @@ impl TaskScheduler {
         
         // Send schedule message
         self.control_tx.send(ControlMessage::Schedule(task)).await
-            .map_err(|_| StorageNodeError::Internal {
-                context: "Failed to send task schedule message".to_string()
-            })?;
+            .map_err(|_| StorageNodeError::Internal("Failed to send task schedule message".to_string()))?;
             
         // Return the task ID
         Ok(task_id)
@@ -460,10 +458,10 @@ impl TaskScheduler {
         self.wait_for_task(&task_id).await
     }
     
+        /// Cancel a task by ID
+    pub async fn cancel(&self, task_id: String) -> Result<()> {
         self.control_tx.send(ControlMessage::Cancel(task_id.to_string())).await
-            .map_err(|_| StorageNodeError::Internal {
-                context: "Failed to send task cancel message".to_string()
-            })?;
+            .map_err(|_| StorageNodeError::Internal("Failed to send task cancel message".to_string()))?;
             
         Ok(())
     }
@@ -490,9 +488,7 @@ impl TaskScheduler {
                 self.watch_task(task_id, tx).await?;
                 
                 // Wait for completion
-                rx.await.map_err(|_| StorageNodeError::ReceiveFailure {
-                    context: format!("Failed to receive completion notification for task {}", task_id),
-                })?
+                rx.await.map_err(|_| StorageNodeError::ReceiveFailure(format!("Failed to receive completion notification for task {}", task_id)))?
             }
         }
     }
@@ -524,10 +520,6 @@ impl TaskScheduler {
         Ok(())
     }
     
-    /// Shutdown the scheduler
-    pub async fn shutdown(&self) -> Result<()> {
-        self.control_tx.send(ControlMessage::Shutdown).await
-            .map_err(|_| StorageNodeError::Internal("Failed to send shutdown message".to_string()))?;
     /// Shutdown the scheduler
     pub async fn shutdown(&self) -> Result<()> {
         self.control_tx.send(ControlMessage::Shutdown).await
@@ -577,8 +569,53 @@ impl TaskScheduler {
         running.len()
     }
     
-    /// Process scheduled tasks
-    async fn process_scheduled_tasks(
+    /// Process scheduled tasks - public method that delegates to static implementation
+    pub async fn process_scheduled_tasks(&self) -> Result<()> {
+        Self::process_scheduled_tasks_impl(
+            &self.config,
+            &self.queues,
+            &self.running,
+            &self.task_metadata,
+            &self.running_count
+        ).await;
+        Ok(())
+    }
+    
+    /// Process recurring tasks - public method that delegates to static implementation
+    pub async fn process_recurring_tasks(&self) -> Result<()> {
+        Self::process_recurring_tasks_impl(
+            &self.config,
+            &self.recurring_tasks,
+            &self.queues,
+            &self.task_metadata,
+            &self.running_count
+        ).await;
+        Ok(())
+    }
+    
+    /// Handle schedule operation
+    pub async fn handle_schedule(&self, task: Task) -> Result<()> {
+        Self::handle_schedule_impl(
+            &self.config,
+            &self.queues,
+            &self.task_metadata,
+            task
+        ).await;
+        Ok(())
+    }
+    
+    /// Handle cancel operation
+    pub async fn handle_cancel(&self, task_id: String) -> Result<()> {
+        Self::handle_cancel_impl(
+            &self.running,
+            &self.task_metadata,
+            &task_id
+        ).await;
+        Ok(())
+    }
+    
+    /// Internal implementation of process_scheduled_tasks
+    async fn process_scheduled_tasks_impl(
         config: &TaskSchedulerConfig,
         queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
         running: &Mutex<HashMap<String, JoinHandle<Result<()>>>>,
@@ -650,9 +687,7 @@ impl TaskScheduler {
             // Process result
             let final_result = match result {
                 Ok(task_result) => task_result,
-                Err(_) => Err(StorageNodeError::Timeout {
-                    context: format!("Task {} timed out after {}s", task_id, config.default_timeout_seconds),
-                }),
+                Err(_) => Err(StorageNodeError::Timeout(format!("Task {} timed out after {}s", task_id, config.default_timeout_seconds))),
             };
             
             // Send completion notification
@@ -730,8 +765,8 @@ impl TaskScheduler {
         });
     }
     
-    /// Process recurring tasks
-    async fn process_recurring_tasks(
+    /// Internal implementation of process_recurring_tasks
+    async fn process_recurring_tasks_impl(
         config: &TaskSchedulerConfig,
         recurring_tasks: &Mutex<Vec<RecurringTaskDef>>,
         queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
@@ -808,8 +843,8 @@ impl TaskScheduler {
         }
     }
     
-    /// Handle schedule control message
-    async fn handle_schedule(
+    /// Internal implementation of handle_schedule
+    async fn handle_schedule_impl(
         config: &TaskSchedulerConfig,
         queues: &Mutex<HashMap<TaskPriority, VecDeque<Task>>>,
         task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
@@ -836,9 +871,7 @@ impl TaskScheduler {
                     
                     // Notify task cancelled
                     if let Some(notify) = task.notify {
-                        let _ = notify.send(Err(StorageNodeError::QueueFull {
-                            context: "Task queue is full".to_string(),
-                        }));
+                        let _ = notify.send(Err(StorageNodeError::QueueFull("Task queue is full".to_string())));
                     }
                     
                     return;
@@ -856,9 +889,7 @@ impl TaskScheduler {
                         
                         // Notify task cancelled
                         if let Some(notify) = task.notify {
-                            let _ = notify.send(Err(StorageNodeError::QueueFull {
-                                context: "Task queue is full".to_string(),
-                            }));
+                            let _ = notify.send(Err(StorageNodeError::QueueFull("Task queue is full".to_string())));
                         }
                         
                         return;
@@ -878,9 +909,7 @@ impl TaskScheduler {
                             
                             // Notify dropped task cancelled
                             if let Some(notify) = dropped_task.notify {
-                                let _ = notify.send(Err(StorageNodeError::TaskCancelled {
-                                    context: "Task dropped due to queue overflow".to_string(),
-                                }));
+                                let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
                             }
                         }
                     }
@@ -898,9 +927,7 @@ impl TaskScheduler {
                         
                         // Notify dropped task cancelled
                         if let Some(notify) = dropped_task.notify {
-                            let _ = notify.send(Err(StorageNodeError::TaskCancelled {
-                                context: "Task dropped due to queue overflow".to_string(),
-                            }));
+                            let _ = notify.send(Err(StorageNodeError::TaskCancelled("Task dropped due to queue overflow".to_string())));
                         }
                     }
                 }
@@ -917,8 +944,8 @@ impl TaskScheduler {
         }
     }
     
-    /// Handle cancel control message
-    async fn handle_cancel(
+    /// Internal implementation of handle_cancel
+    async fn handle_cancel_impl(
         running: &Mutex<HashMap<String, JoinHandle<Result<()>>>>,
         task_metadata: &RwLock<HashMap<String, TaskMetadata>>,
         task_id: &str,
@@ -958,15 +985,11 @@ impl TaskScheduler {
                     .and_then(|m| m.error_message.clone())
                     .unwrap_or_else(|| "Unknown error".to_string());
                     
-                let _ = tx.send(Err(StorageNodeError::TaskFailed {
-                    context: error_message,
-                }));
+                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_message)));
                 return Ok(());
             }
             TaskState::Cancelled => {
-                let _ = tx.send(Err(StorageNodeError::TaskCancelled {
-                    context: format!("Task {} was cancelled", task_id),
-                }));
+                let _ = tx.send(Err(StorageNodeError::TaskCancelled(format!("Task {} was cancelled", task_id))));
                 return Ok(());
             }
             _ => {
@@ -996,15 +1019,11 @@ impl TaskScheduler {
                                 let error_message = metadata.error_message.clone()
                                     .unwrap_or_else(|| "Unknown error".to_string());
                                     
-                                let _ = tx.send(Err(StorageNodeError::TaskFailed {
-                                    context: error_message,
-                                }));
+                                let _ = tx.send(Err(StorageNodeError::TaskFailed(error_message)));
                                 break;
                             }
                             TaskState::Cancelled => {
-                                let _ = tx.send(Err(StorageNodeError::TaskCancelled {
-                                    context: format!("Task {} was cancelled", task_id_owned),
-                                }));
+                                let _ = tx.send(Err(StorageNodeError::TaskCancelled(format!("Task {} was cancelled", task_id_owned))));
                                 break;
                             }
                             _ => {

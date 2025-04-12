@@ -83,7 +83,7 @@ pub struct DistributionNode {
 }
 
 /// Node status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum NodeStatus {
     /// Node is online and responding
     Online,

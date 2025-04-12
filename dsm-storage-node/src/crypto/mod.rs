@@ -2,7 +2,7 @@
     //
     // This module integrates with the DSM cryptography system and provides
     // cryptographic operations for the storage node.
-
+    
     use crate::error::{Result, StorageNodeError};
     use dsm::crypto::{
         decrypt_from_sender, encrypt_for_recipient, sphincs::generate_sphincs_keypair,
@@ -16,7 +16,7 @@
     use std::path::Path;
     use std::fs;
     use tracing::{debug, info};
-
+    
     // Ensure crypto initialization happens only once
     static INIT: Once = Once::new();
 
@@ -124,7 +124,7 @@
     }
 
     /// Decrypt data from a sender
-    pub fn decrypt_data(sender_public_key: &[u8], private_key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt_data(sender_public_key: &[u8], _private_key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         debug!("Decrypting data from sender");
         
         // Use DSM decrypt_from_sender
@@ -132,7 +132,9 @@
             .ok_or_else(|| StorageNodeError::Encryption(format!("Failed to decrypt data")))?;
             
         Ok(decrypted)
-    // / Generate a blinded state ID from data
+    }
+    
+    /// Generate a blinded state ID from data
     pub fn generate_blinded_id(data: &[u8], salt: &[u8]) -> String {
         debug!("Generating blinded state ID");
         
@@ -164,5 +166,4 @@
         // Take first 16 bytes and convert to hex for a readable node ID
         let id_bytes = &hash.as_bytes()[0..16];
         hex::encode(id_bytes)
-    }
     }

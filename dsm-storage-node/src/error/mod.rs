@@ -15,8 +15,7 @@ use thiserror::Error;
 pub type Result<T> = result::Result<T, StorageNodeError>;
 
 /// Error type for DSM Storage Node operations
-#[derive(Debug, Error)]
-#[derive(Clone)]
+#[derive(Debug, Error, Clone)]
 pub enum StorageNodeError {
     /// Timeout error
     #[error("Operation timed out")]
@@ -200,5 +199,19 @@ impl From<toml::de::Error> for StorageNodeError {
 impl From<serde_json::Error> for StorageNodeError {
     fn from(err: serde_json::Error) -> Self {
         StorageNodeError::Json(err.to_string())
+    }
+}
+
+// Implement conversion from bincode::ErrorKind to StorageNodeError
+impl From<Box<bincode::ErrorKind>> for StorageNodeError {
+    fn from(err: Box<bincode::ErrorKind>) -> Self {
+        StorageNodeError::Serialization(err.to_string())
+    }
+}
+
+// Implement conversion from reqwest::StatusCode to StorageNodeError
+impl From<reqwest::StatusCode> for StorageNodeError {
+    fn from(status: reqwest::StatusCode) -> Self {
+        StorageNodeError::Request(format!("HTTP error status: {}", status))
     }
 }
