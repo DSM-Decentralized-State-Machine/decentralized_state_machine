@@ -128,12 +128,12 @@ impl StakingService {
         // Initialize the DLV manager
         let dlv_manager = Arc::new(DLVManager::new());
         self.dlv_manager = Some(dlv_manager.clone());
-        
+
         // Initialize the reward vault manager
         let reward_manager = Arc::new(RewardVaultManager::new(dlv_manager.clone()));
         reward_manager.initialize()?;
         self.reward_manager = Some(reward_manager);
-        
+
         // Initialize the subscription manager if enabled
         if self.config.enable_subscriptions {
             let subscription_config = SubscriptionConfig {
@@ -144,12 +144,10 @@ impl StakingService {
                 renewal_notification_period: self.config.renewal_notification_period,
                 grace_period: self.config.subscription_grace_period,
             };
-            
-            let subscription_manager = Arc::new(SubscriptionManager::new(
-                subscription_config,
-                dlv_manager,
-            ));
-            
+
+            let subscription_manager =
+                Arc::new(SubscriptionManager::new(subscription_config, dlv_manager));
+
             subscription_manager.initialize()?;
             self.subscription_manager = Some(subscription_manager);
         }
@@ -274,32 +272,33 @@ impl StakingService {
 
         // Calculate APY (this would normally come from the DSM system)
         let apy = 0.05; // 5% APY for demonstration
-        
+
         // Get subscription status if enabled
         let subscription_status = if self.config.enable_subscriptions {
             if let Some(subscription_manager) = &self.subscription_manager {
                 // For this example, we'll use the node ID from the staking address
                 let node_id = self.config.staking_address.clone().unwrap_or_default();
-                
+
                 // Get the active subscription
                 let active_subscription = subscription_manager.get_active_subscription(&node_id)?;
-                
+
                 // Get current time
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                
+
                 if let Some(sub) = active_subscription {
                     let days_until_expiration = if sub.end_timestamp > now {
                         Some((sub.end_timestamp - now) / 86400) // Convert seconds to days
                     } else {
                         Some(0)
                     };
-                    
+
                     // Check if renewal is needed soon
-                    let renewal_needed = days_until_expiration.map(|days| days < 7).unwrap_or(false);
-                    
+                    let renewal_needed =
+                        days_until_expiration.map(|days| days < 7).unwrap_or(false);
+
                     Some(SubscriptionStatus {
                         enabled: true,
                         tier: Some(sub.tier),
@@ -547,46 +546,50 @@ impl StakingService {
 
         Ok(pending)
     }
-    
+
     /// Process a storage receipt
     pub fn process_receipt(&self, receipt: StorageReceipt) -> Result<()> {
         if let Some(reward_manager) = &self.reward_manager {
             reward_manager.process_receipt(receipt)
         } else {
-            Err(StorageNodeError::Staking("Reward manager not initialized".into()))
+            Err(StorageNodeError::Staking(
+                "Reward manager not initialized".into(),
+            ))
         }
     }
-    
+
     /// Get the reward manager
     pub fn get_reward_manager(&self) -> Result<Arc<RewardVaultManager>> {
-        self.reward_manager.clone().ok_or_else(|| 
-            StorageNodeError::Staking("Reward manager not initialized".into())
-        )
+        self.reward_manager
+            .clone()
+            .ok_or_else(|| StorageNodeError::Staking("Reward manager not initialized".into()))
     }
-    
+
     /// Update reward rate schedule
     pub fn update_rate_schedule(&self, schedule: RateSchedule) -> Result<()> {
         if let Some(reward_manager) = &self.reward_manager {
             reward_manager.update_rate_schedule(schedule)
         } else {
-            Err(StorageNodeError::Staking("Reward manager not initialized".into()))
+            Err(StorageNodeError::Staking(
+                "Reward manager not initialized".into(),
+            ))
         }
     }
-    
+
     /// Get the subscription manager
     pub fn get_subscription_manager(&self) -> Result<Arc<SubscriptionManager>> {
-        self.subscription_manager.clone().ok_or_else(|| 
-            StorageNodeError::Staking("Subscription manager not initialized".into())
-        )
+        self.subscription_manager
+            .clone()
+            .ok_or_else(|| StorageNodeError::Staking("Subscription manager not initialized".into()))
     }
-    
+
     /// Check if a node has an active subscription
     pub fn has_active_subscription(&self, node_id: &str) -> Result<bool> {
         if !self.config.enable_subscriptions {
             // If subscriptions are disabled, all nodes are considered active
             return Ok(true);
         }
-        
+
         if let Some(subscription_manager) = &self.subscription_manager {
             subscription_manager.has_active_subscription(node_id)
         } else {
@@ -594,7 +597,7 @@ impl StakingService {
             Ok(true)
         }
     }
-    
+
     /// Create a new subscription
     pub fn create_subscription(
         &self,
@@ -602,16 +605,20 @@ impl StakingService {
         reference_state: &dsm::types::state_types::State,
     ) -> Result<SubscriptionPeriod> {
         if !self.config.enable_subscriptions {
-            return Err(StorageNodeError::Staking("Subscriptions not enabled".into()));
+            return Err(StorageNodeError::Staking(
+                "Subscriptions not enabled".into(),
+            ));
         }
-        
+
         if let Some(subscription_manager) = &self.subscription_manager {
             subscription_manager.create_subscription(request, reference_state)
         } else {
-            Err(StorageNodeError::Staking("Subscription manager not initialized".into()))
+            Err(StorageNodeError::Staking(
+                "Subscription manager not initialized".into(),
+            ))
         }
     }
-    
+
     /// Verify a subscription payment
     pub fn verify_subscription_payment(
         &self,
@@ -619,16 +626,20 @@ impl StakingService {
         reference_state: &dsm::types::state_types::State,
     ) -> Result<bool> {
         if !self.config.enable_subscriptions {
-            return Err(StorageNodeError::Staking("Subscriptions not enabled".into()));
+            return Err(StorageNodeError::Staking(
+                "Subscriptions not enabled".into(),
+            ));
         }
-        
+
         if let Some(subscription_manager) = &self.subscription_manager {
             subscription_manager.verify_subscription_payment(request, reference_state)
         } else {
-            Err(StorageNodeError::Staking("Subscription manager not initialized".into()))
+            Err(StorageNodeError::Staking(
+                "Subscription manager not initialized".into(),
+            ))
         }
     }
-    
+
     /// Update subscription usage metrics
     pub fn update_subscription_usage(
         &self,
@@ -641,7 +652,7 @@ impl StakingService {
         if !self.config.enable_subscriptions {
             return Ok(());
         }
-        
+
         if let Some(subscription_manager) = &self.subscription_manager {
             subscription_manager.update_subscription_usage(
                 node_id,
@@ -654,7 +665,7 @@ impl StakingService {
             Ok(())
         }
     }
-    
+
     /// Check if a node is within its subscription quota
     pub fn is_within_quota(
         &self,
@@ -667,7 +678,7 @@ impl StakingService {
         if !self.config.enable_subscriptions {
             return Ok(true);
         }
-        
+
         if let Some(subscription_manager) = &self.subscription_manager {
             subscription_manager.is_within_quota(
                 node_id,

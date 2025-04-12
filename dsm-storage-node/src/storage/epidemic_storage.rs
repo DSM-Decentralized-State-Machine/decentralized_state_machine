@@ -11,7 +11,10 @@ pub struct EpidemicStorage {
 }
 
 impl EpidemicStorage {
-    pub fn new(_config: EpidemicStorageConfig, _backing_storage: Option<Arc<dyn StorageEngine + Send + Sync>>) -> Result<Self> {
+    pub fn new(
+        _config: EpidemicStorageConfig,
+        _backing_storage: Option<Arc<dyn StorageEngine + Send + Sync>>,
+    ) -> Result<Self> {
         // Simplified implementation
         Ok(Self {
             node_id: _config.node_id.clone(),
@@ -249,7 +252,7 @@ async fn create_test_network(
                 continue;
             }
         };
-        
+
         nodes.push(storage);
     }
 
@@ -293,20 +296,23 @@ async fn create_test_network(
 
 /// Test epidemic propagation across the network
 #[cfg(test)]
-async fn test_epidemic_propagation(nodes: &[Arc<EpidemicStorage>], test_entries: usize) -> Result<()> {
+async fn test_epidemic_propagation(
+    nodes: &[Arc<EpidemicStorage>],
+    test_entries: usize,
+) -> Result<()> {
     info!("Testing epidemic propagation with {} entries", test_entries);
-    
+
     if nodes.is_empty() {
         warn!("No nodes for testing, skipping");
         return Ok(());
     }
-    
+
     // Create and store test entries in the first node
     let mut created_ids = Vec::with_capacity(test_entries);
     for i in 0..test_entries {
         let blinded_id = format!("test-entry-{}", i);
         let payload = vec![i as u8; 50]; // Smaller test payload
-        
+
         let entry = BlindedStateEntry {
             blinded_id: blinded_id.clone(),
             encrypted_payload: payload,
@@ -320,7 +326,7 @@ async fn test_epidemic_propagation(nodes: &[Arc<EpidemicStorage>], test_entries:
             proof_hash: [0; 32],
             metadata: HashMap::new(),
         };
-        
+
         // Store with timeout to avoid hanging
         match tokio::time::timeout(Duration::from_millis(300), nodes[0].store(entry)).await {
             Ok(Ok(_)) => created_ids.push(blinded_id),
@@ -328,23 +334,23 @@ async fn test_epidemic_propagation(nodes: &[Arc<EpidemicStorage>], test_entries:
             Err(_) => warn!("Timeout when storing entry"),
         }
     }
-    
+
     if created_ids.is_empty() {
         warn!("Failed to create any test entries");
         return Ok(());
     }
-    
+
     // Allow time for propagation
     info!("Waiting for epidemic propagation...");
     sleep(Duration::from_millis(500)).await;
-    
+
     // Check propagation to all nodes
     let mut propagation_stats = HashMap::new();
     let total_nodes = nodes.len();
-    
+
     for id in &created_ids {
         let mut found_count = 0;
-        
+
         for node in nodes {
             // Check existence with timeout
             match tokio::time::timeout(Duration::from_millis(100), node.exists(id)).await {
@@ -352,25 +358,25 @@ async fn test_epidemic_propagation(nodes: &[Arc<EpidemicStorage>], test_entries:
                 _ => {} // Skip nodes that don't have the entry or timeout
             }
         }
-        
+
         let propagation_percentage = 100.0 * (found_count as f64) / (total_nodes as f64);
         propagation_stats.insert(id.clone(), propagation_percentage);
-        
+
         info!(
             "Entry {} propagated to {}/{} nodes ({:.1}%)",
             id, found_count, total_nodes, propagation_percentage
         );
     }
-    
+
     // Calculate overall propagation
     let average_propagation = if propagation_stats.is_empty() {
         0.0
     } else {
         propagation_stats.values().sum::<f64>() / propagation_stats.len() as f64
     };
-    
+
     info!("Average propagation rate: {:.1}%", average_propagation);
-    
+
     Ok(())
 }
 
@@ -378,14 +384,14 @@ async fn test_epidemic_propagation(nodes: &[Arc<EpidemicStorage>], test_entries:
 #[cfg(test)]
 async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
     info!("Testing concurrent update resolution");
-    
+
     if nodes.len() < 2 {
         warn!("Not enough nodes for concurrent update test, skipping");
         return Ok(());
     }
-    
+
     let blinded_id = "concurrent-test-entry";
-    
+
     // Create initial entry in first node
     let initial_entry = BlindedStateEntry {
         blinded_id: blinded_id.to_string(),
@@ -400,7 +406,7 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
         proof_hash: [0; 32],
         metadata: HashMap::new(),
     };
-    
+
     // Store initial entry with timeout
     match tokio::time::timeout(Duration::from_millis(300), nodes[0].store(initial_entry)).await {
         Ok(Ok(_)) => info!("Stored initial entry"),
@@ -409,14 +415,14 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
             return Ok(());
         }
     }
-    
+
     // Wait for initial propagation
     sleep(Duration::from_millis(200)).await;
-    
+
     // Perform concurrent updates from different nodes (use at most 3 nodes)
     let update_nodes = std::cmp::min(3, nodes.len());
     let mut update_futures = Vec::new();
-    
+
     for (i, node) in nodes.iter().enumerate().take(update_nodes) {
         let entry = BlindedStateEntry {
             blinded_id: blinded_id.to_string(),
@@ -431,36 +437,36 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
             proof_hash: [0; 32],
             metadata: HashMap::new(),
         };
-        
+
         let node_clone = node.clone();
         update_futures.push(tokio::spawn(async move {
             tokio::time::timeout(Duration::from_millis(300), node_clone.store(entry)).await
         }));
     }
-    
+
     // Execute updates concurrently
     for result in join_all(update_futures).await {
         // Ignore individual results as this is a test of eventual consistency
         let _ = result;
     }
-    
+
     // Wait for convergence
     info!("Waiting for convergence...");
     sleep(Duration::from_millis(500)).await;
-    
+
     // Verify eventual consistency
     let mut retrieved_entries = Vec::new();
     for node in nodes {
         match tokio::time::timeout(Duration::from_millis(200), node.retrieve(blinded_id)).await {
             Ok(Ok(Some(entry))) => {
                 retrieved_entries.push(entry.encrypted_payload);
-            },
+            }
             _ => {
                 // Skip nodes that timeout or don't have the entry
             }
         }
     }
-    
+
     // Check if nodes converged to the same value
     let all_consistent = if retrieved_entries.len() > 1 {
         let first_payload = &retrieved_entries[0];
@@ -469,7 +475,7 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
         warn!("Not enough entries retrieved to check consistency");
         false
     };
-    
+
     info!(
         "Convergence test result: {}",
         if all_consistent {
@@ -478,7 +484,7 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
             "Nodes did not converge - inconsistency detected"
         }
     );
-    
+
     Ok(())
 }
 
@@ -486,27 +492,24 @@ async fn test_concurrent_updates(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
 #[cfg(test)]
 async fn test_regional_consistency(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
     info!("Testing regional consistency");
-    
+
     if nodes.is_empty() {
         warn!("No nodes for testing, skipping");
         return Ok(());
     }
-    
+
     // Group nodes by region
     let mut regions: HashMap<String, Vec<&Arc<EpidemicStorage>>> = HashMap::new();
-    
+
     for node in nodes {
-        regions
-            .entry(node.region.clone())
-            .or_default()
-            .push(node);
+        regions.entry(node.region.clone()).or_default().push(node);
     }
-    
+
     if regions.len() < 2 {
         warn!("Not enough regions for testing regional consistency, skipping");
         return Ok(());
     }
-    
+
     // Create region-specific entries
     for (region, region_nodes) in &regions {
         if let Some(first_node) = region_nodes.first() {
@@ -524,7 +527,7 @@ async fn test_regional_consistency(nodes: &[Arc<EpidemicStorage>]) -> Result<()>
                 proof_hash: [0; 32],
                 metadata: HashMap::new(),
             };
-            
+
             // Store with timeout
             match tokio::time::timeout(Duration::from_millis(300), first_node.store(entry)).await {
                 Ok(Ok(_)) => info!("Created entry {} in region {}", blinded_id, region),
@@ -532,14 +535,14 @@ async fn test_regional_consistency(nodes: &[Arc<EpidemicStorage>]) -> Result<()>
             }
         }
     }
-    
+
     // Allow time for propagation
     sleep(Duration::from_millis(500)).await;
-    
+
     // Check propagation within and across regions
     for (region, region_nodes) in &regions {
         let blinded_id = format!("regional-entry-{}", region);
-        
+
         // Check within region
         let mut found_in_region = 0;
         for node in region_nodes {
@@ -548,42 +551,44 @@ async fn test_regional_consistency(nodes: &[Arc<EpidemicStorage>]) -> Result<()>
                 _ => {} // Skip nodes that don't have the entry or timeout
             }
         }
-        
+
         let within_region_percentage = if region_nodes.is_empty() {
             0.0
         } else {
             100.0 * (found_in_region as f64) / (region_nodes.len() as f64)
         };
-        
+
         // Check across regions
         let mut found_across_regions = 0;
         let mut other_region_nodes = 0;
-        
+
         for (other_region, other_nodes) in &regions {
             if other_region != region {
                 other_region_nodes += other_nodes.len();
-                
+
                 for node in other_nodes {
-                    match tokio::time::timeout(Duration::from_millis(100), node.exists(&blinded_id)).await {
+                    match tokio::time::timeout(Duration::from_millis(100), node.exists(&blinded_id))
+                        .await
+                    {
                         Ok(Ok(true)) => found_across_regions += 1,
                         _ => {} // Skip nodes that don't have the entry or timeout
                     }
                 }
             }
         }
-        
+
         let across_region_percentage = if other_region_nodes > 0 {
             100.0 * (found_across_regions as f64) / (other_region_nodes as f64)
         } else {
             0.0
         };
-        
+
         info!(
             "Entry {} propagation: {:.1}% within region {}, {:.1}% across other regions",
             blinded_id, within_region_percentage, region, across_region_percentage
         );
     }
-    
+
     Ok(())
 }
 
@@ -591,30 +596,30 @@ async fn test_regional_consistency(nodes: &[Arc<EpidemicStorage>]) -> Result<()>
 #[cfg(test)]
 async fn shutdown_nodes(nodes: &[Arc<EpidemicStorage>]) -> Result<()> {
     info!("Shutting down {} nodes", nodes.len());
-    
+
     let mut shutdown_futures = Vec::new();
-    
+
     for node in nodes {
         let node_clone = node.clone();
         shutdown_futures.push(tokio::spawn(async move {
             tokio::time::timeout(Duration::from_millis(300), node_clone.shutdown()).await
         }));
     }
-    
+
     // Wait for all shutdowns (or timeouts)
     for result in join_all(shutdown_futures).await {
         // Ignore individual results as they are logged in EpidemicStorage::shutdown
         let _ = result;
     }
-    
+
     // Force a small delay for final cleanup
     sleep(Duration::from_millis(100)).await;
-    
+
     Ok(())
 }
 
 /// Main integration test function
-/// 
+///
 /// NOTE: This test is marked as #[ignore] because it's a long-running
 /// integration test that requires network setup and can take a long time.
 /// Run it explicitly with:
@@ -627,79 +632,91 @@ async fn test_epidemic_storage_integration() -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
-    
+
     // Create test network
     let topology = "small-world";
     let fanout = 2;
     let node_count = 5;
-    
-    info!("Testing with {} topology, {} nodes, and fanout {}", topology, node_count, fanout);
-    
+
+    info!(
+        "Testing with {} topology, {} nodes, and fanout {}",
+        topology, node_count, fanout
+    );
+
     // Use a cancellable task and timeout for the entire test
     let test_task = tokio::spawn(async move {
         // Create the network with a timeout
         let nodes = match tokio::time::timeout(
             Duration::from_secs(3),
-            create_test_network(node_count, fanout, topology)
-        ).await {
+            create_test_network(node_count, fanout, topology),
+        )
+        .await
+        {
             Ok(Ok(nodes)) => {
                 info!("Successfully created {} nodes", nodes.len());
                 if nodes.len() < node_count {
-                    warn!("Created fewer nodes than requested: {}/{}", nodes.len(), node_count);
+                    warn!(
+                        "Created fewer nodes than requested: {}/{}",
+                        nodes.len(),
+                        node_count
+                    );
                 }
                 nodes
-            },
+            }
             Ok(Err(e)) => {
                 warn!("Failed to create test network: {:?}", e);
                 return Err(e);
-            },
+            }
             Err(_) => {
                 warn!("Timeout creating test network");
                 return Err(crate::error::StorageNodeError::Timeout);
             }
         };
-        
+
         if nodes.is_empty() {
             warn!("No nodes were created, aborting test");
             return Err(crate::error::StorageNodeError::Configuration);
         }
-        
+
         // Run test stages sequentially with individual timeouts
-        match tokio::time::timeout(Duration::from_secs(2), test_epidemic_propagation(&nodes, 3)).await {
+        match tokio::time::timeout(Duration::from_secs(2), test_epidemic_propagation(&nodes, 3))
+            .await
+        {
             Ok(Ok(_)) => info!("Propagation test completed successfully"),
             Ok(Err(e)) => warn!("Propagation test failed: {:?}", e),
-            Err(_) => warn!("Propagation test timed out")
+            Err(_) => warn!("Propagation test timed out"),
         }
-        
+
         match tokio::time::timeout(Duration::from_secs(2), test_concurrent_updates(&nodes)).await {
             Ok(Ok(_)) => info!("Concurrent updates test completed successfully"),
             Ok(Err(e)) => warn!("Concurrent updates test failed: {:?}", e),
-            Err(_) => warn!("Concurrent updates test timed out")
+            Err(_) => warn!("Concurrent updates test timed out"),
         }
-        
-        match tokio::time::timeout(Duration::from_secs(2), test_regional_consistency(&nodes)).await {
+
+        match tokio::time::timeout(Duration::from_secs(2), test_regional_consistency(&nodes)).await
+        {
             Ok(Ok(_)) => info!("Regional consistency test completed successfully"),
             Ok(Err(e)) => warn!("Regional consistency test failed: {:?}", e),
-            Err(_) => warn!("Regional consistency test timed out")
+            Err(_) => warn!("Regional consistency test timed out"),
         }
-        
+
         // Always attempt to shut down nodes, even if tests failed
         match tokio::time::timeout(Duration::from_secs(2), shutdown_nodes(&nodes)).await {
             Ok(Ok(_)) => info!("All nodes shut down successfully"),
             Ok(Err(e)) => warn!("Error shutting down nodes: {:?}", e),
-            Err(_) => warn!("Timeout shutting down nodes")
+            Err(_) => warn!("Timeout shutting down nodes"),
         }
-        
+
         Ok(())
     });
-    
+
     // Set an overall timeout for the entire test (8 seconds)
     match tokio::time::timeout(Duration::from_secs(8), test_task).await {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             warn!("Test task panicked: {:?}", e);
             Err(crate::error::StorageNodeError::Internal)
-        },
+        }
         Err(_) => {
             warn!("Test timed out after 8 seconds, forcibly cancelling");
             Ok(())
@@ -739,7 +756,7 @@ async fn test_epidemic_storage_basic() {
     };
 
     // We don't need to call storage.start() for basic local functionality tests
-    
+
     // Use a timeout wrapper to prevent the test from hanging
     let test_result = tokio::time::timeout(Duration::from_secs(5), async {
         // Create a test entry
@@ -761,7 +778,7 @@ async fn test_epidemic_storage_basic() {
         match storage.store(entry.clone()).await {
             Ok(response) => {
                 assert_eq!(response.blinded_id, "test-entry");
-            },
+            }
             Err(e) => {
                 error!("Failed to store entry: {:?}", e);
                 return;
@@ -773,11 +790,11 @@ async fn test_epidemic_storage_basic() {
             Ok(Some(retrieved)) => {
                 assert_eq!(retrieved.blinded_id, "test-entry");
                 assert_eq!(retrieved.encrypted_payload, vec![1, 2, 3, 4]);
-            },
+            }
             Ok(None) => {
                 error!("Entry not found");
                 return;
-            },
+            }
             Err(e) => {
                 error!("Failed to retrieve entry: {:?}", e);
                 return;
@@ -788,7 +805,7 @@ async fn test_epidemic_storage_basic() {
         match storage.exists("test-entry").await {
             Ok(exists) => {
                 assert!(exists);
-            },
+            }
             Err(e) => {
                 error!("Failed to check existence: {:?}", e);
                 return;
@@ -800,7 +817,7 @@ async fn test_epidemic_storage_basic() {
             Ok(entries) => {
                 assert_eq!(entries.len(), 1);
                 assert_eq!(entries[0], "test-entry");
-            },
+            }
             Err(e) => {
                 error!("Failed to list entries: {:?}", e);
                 return;
@@ -811,7 +828,7 @@ async fn test_epidemic_storage_basic() {
         match storage.delete("test-entry").await {
             Ok(deleted) => {
                 assert!(deleted);
-            },
+            }
             Err(e) => {
                 error!("Failed to delete entry: {:?}", e);
                 return;
@@ -822,24 +839,31 @@ async fn test_epidemic_storage_basic() {
         match storage.exists("test-entry").await {
             Ok(exists) => {
                 assert!(!exists);
-            },
+            }
             Err(e) => {
                 error!("Failed to check existence after deletion: {:?}", e);
                 return;
             }
         }
-        
+
         // Try to start the storage engine with a timeout
-        if tokio::time::timeout(Duration::from_millis(500), storage.start()).await.is_err() {
+        if tokio::time::timeout(Duration::from_millis(500), storage.start())
+            .await
+            .is_err()
+        {
             warn!("Timeout when starting storage, but test completed successfully");
         }
-        
+
         // Try to shut down the storage engine with a timeout
-        if tokio::time::timeout(Duration::from_millis(500), storage.shutdown()).await.is_err() {
+        if tokio::time::timeout(Duration::from_millis(500), storage.shutdown())
+            .await
+            .is_err()
+        {
             warn!("Timeout when shutting down storage, but test completed successfully");
         }
-    }).await;
-    
+    })
+    .await;
+
     // Check if test timed out
     if test_result.is_err() {
         error!("Basic storage test timed out");

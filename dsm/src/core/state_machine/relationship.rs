@@ -568,7 +568,7 @@ fn verify_entropy_evolution(
         let expected_test_entropy = blake3::hash(format!("entropy_{}", state_num).as_bytes())
             .as_bytes()
             .to_vec();
-        
+
         if constant_time_eq(current_entropy, &expected_test_entropy) {
             return Ok(true);
         }
@@ -603,14 +603,14 @@ fn verify_entropy_evolution(
     Ok(constant_time_eq(current_entropy, &expected_entropy))
 }
 
-/// Helper to extract state number from test entropy 
+/// Helper to extract state number from test entropy
 fn extract_state_number_from_entropy(entropy: &[u8]) -> Option<u64> {
     // This is only used for test scenarios, so we can be optimistic
     for i in 1..100 {
         let test_entropy = blake3::hash(format!("entropy_{}", i).as_bytes())
             .as_bytes()
             .to_vec();
-        
+
         if constant_time_eq(entropy, &test_entropy) {
             return Some(i);
         }

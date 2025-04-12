@@ -59,11 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .clone()
             .unwrap_or_else(|| "default".to_string()),
         public_key: "default-key".to_string(), // Would be generated or loaded in production
-        endpoint: config
-            .network
-            .external_address
-            .clone()
-            .unwrap_or_default(),
+        endpoint: config.network.external_address.clone().unwrap_or_default(),
     };
 
     // Create storage config for the storage factory

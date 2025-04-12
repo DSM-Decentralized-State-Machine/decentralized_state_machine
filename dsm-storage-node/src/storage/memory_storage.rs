@@ -86,7 +86,8 @@ impl MemoryStorage {
         // Load persisted data if available
         if let Some(path) = &config.persistence_path {
             if let Ok(data) = fs::read(path) {
-                if let Ok(entries) = bincode::deserialize::<Vec<(String, BlindedStateEntry)>>(&data) {
+                if let Ok(entries) = bincode::deserialize::<Vec<(String, BlindedStateEntry)>>(&data)
+                {
                     for (id, entry) in entries {
                         instance.entries.insert(id.clone(), entry);
                         instance.insertion_order.blocking_write().push(id);
@@ -99,7 +100,9 @@ impl MemoryStorage {
         if config.persistence_path.is_some() {
             let storage = instance.clone();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(PERSISTENCE_INTERVAL_SECS));
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+                    PERSISTENCE_INTERVAL_SECS,
+                ));
                 loop {
                     interval.tick().await;
                     if let Err(e) = storage.persist().await {
@@ -114,37 +117,55 @@ impl MemoryStorage {
 
     async fn persist(&self) -> Result<()> {
         if let Some(path) = &self.persistence_path {
-            let entries: Vec<_> = self.entries.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
+            let entries: Vec<_> = self
+                .entries
+                .iter()
+                .map(|e| (e.key().clone(), e.value().clone()))
+                .collect();
             let data = bincode::serialize(&entries)
                 .map_err(|e| StorageNodeError::Serialization(e.to_string()))?;
-            fs::write(path, data)
-                .map_err(|e| StorageNodeError::Storage(format!("Failed to persist storage: {}", e)))?;
+            fs::write(path, data).map_err(|e| {
+                StorageNodeError::Storage(format!("Failed to persist storage: {}", e))
+            })?;
         }
         Ok(())
     }
 
     async fn evict(&self) -> Result<()> {
         let current_size = self.total_bytes.load(Ordering::Relaxed) as usize;
-        if current_size <= self.config.max_memory_bytes && self.entries.len() <= self.config.max_entries {
+        if current_size <= self.config.max_memory_bytes
+            && self.entries.len() <= self.config.max_entries
+        {
             return Ok(());
         }
 
         let to_evict = match self.config.eviction_policy {
             EvictionPolicy::LRU => {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                let mut candidates: Vec<_> = self.last_accessed.iter()
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let mut candidates: Vec<_> = self
+                    .last_accessed
+                    .iter()
                     .map(|entry| (entry.key().clone(), now - *entry.value()))
                     .collect();
                 candidates.sort_by_key(|(_id, age)| *age);
-                candidates.into_iter().map(|(id, _)| id).take(100).collect::<Vec<_>>()
-            },
+                candidates
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .take(100)
+                    .collect::<Vec<_>>()
+            }
             EvictionPolicy::LFU => {
-                let mut candidates: Vec<_> = self.access_counts.iter()
+                let mut candidates: Vec<_> = self
+                    .access_counts
+                    .iter()
                     .map(|entry| (entry.key().clone(), *entry.value()))
                     .collect();
                 candidates.sort_by_key(|(_id, count)| *count);
                 candidates.into_iter().map(|(id, _)| id).take(100).collect()
-            },
+            }
             EvictionPolicy::FIFO => {
                 let insertion_order = self.insertion_order.read().await;
                 insertion_order.iter().take(100).cloned().collect()
@@ -166,9 +187,13 @@ impl MemoryStorage {
     }
 
     fn update_access_metrics(&self, id: &str) {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         self.last_accessed.insert(id.to_string(), now);
-        self.access_counts.entry(id.to_string())
+        self.access_counts
+            .entry(id.to_string())
             .and_modify(|count| *count += 1)
             .or_insert(1);
     }
@@ -226,7 +251,9 @@ impl super::StorageEngine for MemoryStorage {
         let offset = offset.unwrap_or(0);
         let limit = limit.unwrap_or(100);
 
-        let mut entries: Vec<String> = self.entries.iter()
+        let mut entries: Vec<String> = self
+            .entries
+            .iter()
             .map(|entry| entry.key().clone())
             .skip(offset)
             .take(limit)
@@ -240,7 +267,7 @@ impl super::StorageEngine for MemoryStorage {
         Ok(StorageStats {
             total_entries: self.entries.len(),
             total_bytes: self.total_bytes.load(Ordering::Relaxed) as usize,
-            total_expired: 0, // Memory storage doesn't track expiration
+            total_expired: 0,   // Memory storage doesn't track expiration
             oldest_entry: None, // Memory storage doesn't track entry age
             newest_entry: None,
         })

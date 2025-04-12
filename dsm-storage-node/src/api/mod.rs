@@ -70,7 +70,9 @@ impl From<StorageNodeError> for ApiError {
         let (code, message) = match err {
             StorageNodeError::Timeout => ("TIMEOUT", "Operation timed out".to_string()),
             StorageNodeError::Internal => ("INTERNAL_ERROR", "Internal server error".to_string()),
-            StorageNodeError::Configuration => ("CONFIGURATION_ERROR", "Configuration error".to_string()),
+            StorageNodeError::Configuration => {
+                ("CONFIGURATION_ERROR", "Configuration error".to_string())
+            }
             StorageNodeError::NotFound(msg) => ("NOT_FOUND", msg),
             StorageNodeError::Storage(msg) => ("STORAGE_ERROR", msg),
             StorageNodeError::Config(msg) => ("CONFIG_ERROR", msg),
@@ -94,7 +96,10 @@ impl From<StorageNodeError> for ApiError {
             StorageNodeError::QueueFull(msg) => ("QUEUE_FULL", msg),
             StorageNodeError::ReceiveFailure(msg) => ("RECEIVE_FAILURE", msg),
             StorageNodeError::InvalidOperation(msg) => ("INVALID_OPERATION", msg),
-            StorageNodeError::ConcurrencyLimitExceeded => ("CONCURRENCY_LIMIT_EXCEEDED", "Concurrency limit exceeded".to_string()),
+            StorageNodeError::ConcurrencyLimitExceeded => (
+                "CONCURRENCY_LIMIT_EXCEEDED",
+                "Concurrency limit exceeded".to_string(),
+            ),
         };
 
         Self {
@@ -124,7 +129,7 @@ impl ApiServer {
             storage,
             staking_service,
         });
-        
+
         Self {
             app_state,
             bind_address,
@@ -167,21 +172,15 @@ impl ApiServer {
             .route("/data", get(handlers::list_data))
             // Unilateral transaction inbox
             .route("/inbox", post(store_inbox_entry))
-            .route(
-                "/inbox/:recipient_genesis",
-                get(get_inbox_entries),
-            )
+            .route("/inbox/:recipient_genesis", get(get_inbox_entries))
             .route(
                 "/inbox/:recipient_genesis/:entry_id",
                 delete(delete_inbox_entry),
             )
-            // Vault API  
+            // Vault API
             .route("/vault", post(store_vault))
             .route("/vault/:vault_id", get(get_vault))
-            .route(
-                "/vault/creator/:creator_id",
-                get(get_vaults_by_creator),
-            )
+            .route("/vault/creator/:creator_id", get(get_vaults_by_creator))
             .route(
                 "/vault/recipient/:recipient_id",
                 get(get_vaults_by_recipient),

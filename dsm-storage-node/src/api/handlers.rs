@@ -185,9 +185,7 @@ pub async fn list_data(
 
 /// Get node stats handler
 #[axum::debug_handler]
-pub async fn node_stats(
-    State(state): State<Arc<AppState>>,
-) -> Result<impl IntoResponse> {
+pub async fn node_stats(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse> {
     debug!("Getting node stats");
 
     // Get storage stats

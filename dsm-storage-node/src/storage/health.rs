@@ -23,10 +23,10 @@ use tracing::{debug, error, info};
 pub enum FailureDetectorAlgorithm {
     /// Simple timeout-based detector
     Timeout,
-    
+
     /// Phi-accrual failure detector
     PhiAccrual,
-    
+
     /// Adaptive failure detector
     Adaptive,
 }
@@ -38,52 +38,52 @@ pub enum HealthCheckMessage {
     Ping {
         /// Sender node ID
         sender: String,
-        
+
         /// Timestamp
         timestamp: u64,
-        
+
         /// Sequence number
         sequence: u64,
     },
-    
+
     /// Pong response
     Pong {
         /// Sender node ID
         sender: String,
-        
+
         /// Responder node ID
         responder: String,
-        
+
         /// Original timestamp
         request_timestamp: u64,
-        
+
         /// Response timestamp
         response_timestamp: u64,
-        
+
         /// Sequence number
         sequence: u64,
     },
-    
+
     /// Status report
     StatusReport {
         /// Sender node ID
         sender: String,
-        
+
         /// Node status
         status: NodeStatus,
-        
+
         /// System load (0.0 - 1.0)
         system_load: f32,
-        
+
         /// Memory usage (0.0 - 1.0)
         memory_usage: f32,
-        
+
         /// Storage usage (0.0 - 1.0)
         storage_usage: f32,
-        
+
         /// Uptime in seconds
         uptime: u64,
-        
+
         /// Timestamp
         timestamp: u64,
     },
@@ -94,37 +94,37 @@ pub enum HealthCheckMessage {
 pub struct NodeHealth {
     /// Node information
     pub node: StorageNode,
-    
+
     /// Node status
     pub status: NodeStatus,
-    
+
     /// Last seen timestamp
     pub last_seen: Instant,
-    
+
     /// Failure detector value (phi for phi-accrual)
     pub failure_value: f64,
-    
+
     /// Recent ping history (RTT in milliseconds)
     pub ping_history: VecDeque<u64>,
-    
+
     /// Average ping RTT in milliseconds
     pub avg_ping_rtt: u64,
-    
+
     /// System load (0.0 - 1.0)
     pub system_load: f32,
-    
+
     /// Memory usage (0.0 - 1.0)
     pub memory_usage: f32,
-    
+
     /// Storage usage (0.0 - 1.0)
     pub storage_usage: f32,
-    
+
     /// Success count
     pub success_count: u64,
-    
+
     /// Failure count
     pub failure_count: u64,
-    
+
     /// Pending pings
     pub pending_pings: HashMap<u64, Instant>,
 }
@@ -147,64 +147,67 @@ impl NodeHealth {
             pending_pings: HashMap::new(),
         }
     }
-    
+
     /// Add a ping RTT measurement
     pub fn add_ping_rtt(&mut self, rtt_ms: u64) {
         // Add to history
         self.ping_history.push_back(rtt_ms);
-        
+
         // Keep history at most 20 entries
         while self.ping_history.len() > 20 {
             self.ping_history.pop_front();
         }
-        
+
         // Update average
         if !self.ping_history.is_empty() {
-            self.avg_ping_rtt = self.ping_history.iter().sum::<u64>() / self.ping_history.len() as u64;
+            self.avg_ping_rtt =
+                self.ping_history.iter().sum::<u64>() / self.ping_history.len() as u64;
         }
-        
+
         // Update last seen
         self.last_seen = Instant::now();
-        
+
         // Update status
         self.status = NodeStatus::Online;
-        
+
         // Record success
         self.success_count += 1;
     }
-    
+
     /// Record a ping timeout
     pub fn record_timeout(&mut self) {
         // Update failure count
         self.failure_count += 1;
-        
+
         // Update status if too many failures
         if self.failure_count > 3 && self.last_seen.elapsed() > Duration::from_secs(30) {
             self.status = NodeStatus::Offline;
         }
     }
-    
+
     /// Calculate phi value for phi-accrual failure detector
     pub fn calculate_phi(&mut self) -> f64 {
         if self.ping_history.is_empty() {
             return 0.0;
         }
-        
+
         // Calculate mean and variance
         let mean = self.avg_ping_rtt as f64;
-        let variance = self.ping_history
+        let variance = self
+            .ping_history
             .iter()
             .map(|&rtt| {
                 let diff = rtt as f64 - mean;
                 diff * diff
             })
-            .sum::<f64>() / self.ping_history.len() as f64;
-        
+            .sum::<f64>()
+            / self.ping_history.len() as f64;
+
         let std_dev = variance.sqrt();
-        
+
         // Calculate time since last seen
         let time_since_last_seen = self.last_seen.elapsed().as_millis() as f64;
-        
+
         // Calculate phi value
         if std_dev > 0.0 {
             let y = (time_since_last_seen - mean) / std_dev;
@@ -219,16 +222,14 @@ impl NodeHealth {
             0.0
         }
     }
-    
+
     /// Check if node is suspected failed
     pub fn is_suspected_failed(&self, algorithm: FailureDetectorAlgorithm, threshold: f64) -> bool {
         match algorithm {
             FailureDetectorAlgorithm::Timeout => {
                 self.last_seen.elapsed() > Duration::from_secs(30) && self.failure_count > 3
             }
-            FailureDetectorAlgorithm::PhiAccrual => {
-                self.failure_value > threshold
-            }
+            FailureDetectorAlgorithm::PhiAccrual => self.failure_value > threshold,
             FailureDetectorAlgorithm::Adaptive => {
                 // Adaptive threshold based on network conditions
                 let base_threshold = threshold;
@@ -237,15 +238,15 @@ impl NodeHealth {
                 } else {
                     0.0
                 };
-                
+
                 // Lower threshold (more sensitive) for nodes with high failure ratio
                 let adjusted_threshold = base_threshold * (1.0 - failure_ratio * 0.5);
-                
+
                 self.failure_value > adjusted_threshold
             }
         }
     }
-    
+
     /// Update from status report
     pub fn update_from_status_report(
         &mut self,
@@ -276,15 +277,15 @@ fn erf(x: f64) -> f64 {
     let a4 = -1.453152027;
     let a5 = 1.061405429;
     let p = 0.3275911;
-    
+
     // Save the sign of x
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let x = x.abs();
-    
+
     // A&S formula 7.1.26
     let t = 1.0 / (1.0 + p * x);
     let y = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t;
-    
+
     sign * (1.0 - y * (-x * x).exp())
 }
 
@@ -293,22 +294,22 @@ fn erf(x: f64) -> f64 {
 pub struct HealthCheckConfig {
     /// Ping interval in milliseconds
     pub ping_interval_ms: u64,
-    
+
     /// Ping timeout in milliseconds
     pub ping_timeout_ms: u64,
-    
+
     /// Status report interval in milliseconds
     pub status_report_interval_ms: u64,
-    
+
     /// Failure detector algorithm
     pub failure_detector: FailureDetectorAlgorithm,
-    
+
     /// Phi threshold for phi-accrual failure detector
     pub phi_threshold: f64,
-    
+
     /// Maximum concurrent pings
     pub max_concurrent_pings: usize,
-    
+
     /// Health check batch size
     pub health_check_batch_size: usize,
 }
@@ -331,22 +332,22 @@ impl Default for HealthCheckConfig {
 pub struct HealthMonitor {
     /// Node ID
     node_id: String,
-    
+
     /// Health information for all known nodes
     node_health: Arc<RwLock<HashMap<String, NodeHealth>>>,
-    
+
     /// Small-world topology
     topology: Arc<RwLock<SmallWorldTopology>>,
-    
+
     /// Health check configuration
     config: HealthCheckConfig,
-    
+
     /// Health check message sender
     message_tx: Sender<(StorageNode, HealthCheckMessage)>,
-    
+
     /// Current sequence number for ping messages
     sequence: Arc<RwLock<u64>>,
-    
+
     /// System start time
     #[allow(dead_code)]
     start_time: Instant,
@@ -360,7 +361,7 @@ impl HealthMonitor {
         config: HealthCheckConfig,
     ) -> (Self, Receiver<(StorageNode, HealthCheckMessage)>) {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(100);
-        
+
         let monitor = Self {
             node_id,
             node_health: Arc::new(RwLock::new(HashMap::new())),
@@ -370,21 +371,21 @@ impl HealthMonitor {
             sequence: Arc::new(RwLock::new(0)),
             start_time: Instant::now(),
         };
-        
+
         (monitor, message_rx)
     }
-    
+
     /// Start the health monitor
     pub async fn start(&self) -> Result<()> {
         // Start the ping task
         self.start_ping_task();
-        
+
         // Start the status report task
         // self.start_status_report_task();
-        
+
         Ok(())
     }
-    
+
     /// Start the ping task
     pub fn start_ping_task(&self) {
         let node_id = self.node_id.clone();
@@ -393,41 +394,43 @@ impl HealthMonitor {
         let config = self.config.clone();
         let message_tx = self.message_tx.clone();
         let sequence = self.sequence.clone();
-        
+
         tokio::spawn(async move {
             info!("Starting health check ping task for node: {}", node_id);
-            
+
             let mut ping_interval = interval(Duration::from_millis(config.ping_interval_ms));
-            
+
             loop {
                 ping_interval.tick().await;
-                
+
                 // Extract all neighbors from topology before passing to the update function
                 let all_nodes = {
                     let topology_guard = topology.read().await;
-                    topology_guard.all_neighbors().into_iter().collect::<Vec<_>>()
+                    topology_guard
+                        .all_neighbors()
+                        .into_iter()
+                        .collect::<Vec<_>>()
                 };
-                
+
                 // Update node health with extracted nodes
-                Self::update_node_health_from_topology_nodes(&node_id, &node_health, all_nodes).await;
-                
+                Self::update_node_health_from_topology_nodes(&node_id, &node_health, all_nodes)
+                    .await;
+
                 // Select a batch of nodes to ping
-                let nodes_to_ping = Self::select_nodes_to_ping(
-                    &node_health,
-                    config.health_check_batch_size,
-                ).await;
-                
+                let nodes_to_ping =
+                    Self::select_nodes_to_ping(&node_health, config.health_check_batch_size).await;
+
                 if nodes_to_ping.is_empty() {
                     debug!("No nodes to ping");
                     continue;
                 }
-                
+
                 let current_sequence = {
                     let mut seq = sequence.write().await;
                     *seq += 1;
                     *seq
                 };
-                
+
                 // Send pings
                 for node in nodes_to_ping {
                     let ping_message = HealthCheckMessage::Ping {
@@ -435,7 +438,7 @@ impl HealthMonitor {
                         timestamp: Self::current_timestamp_millis(),
                         sequence: current_sequence,
                     };
-                    
+
                     // Record pending ping
                     {
                         let mut health = node_health.write().await;
@@ -443,20 +446,21 @@ impl HealthMonitor {
                             entry.pending_pings.insert(current_sequence, Instant::now());
                         }
                     }
-                    
+
                     // Send ping - use try_send to avoid awaiting, which fixes the Send bound issue
                     if let Err(e) = message_tx.try_send((node.clone(), ping_message)) {
                         error!("Failed to send ping to {}: {}", node.id, e);
                     }
                 }
-                
+
                 // Process timeouts
                 Self::process_ping_timeouts(
                     &node_health,
                     config.ping_timeout_ms,
                     config.failure_detector,
                     config.phi_threshold,
-                ).await;
+                )
+                .await;
             }
         });
     }
@@ -482,7 +486,7 @@ impl HealthMonitor {
             // Implementation for sending periodic status reports
         });
     }
-    
+
     /// Process ping timeouts
     async fn process_ping_timeouts(
         node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
@@ -500,33 +504,34 @@ impl HealthMonitor {
                 .filter(|(_seq, time)| time.elapsed() > timeout_duration)
                 .map(|(seq, _time)| *seq)
                 .collect();
-            
+
             // Remove timed out pings and record timeouts
             for seq in timed_out_sequences {
                 health.pending_pings.remove(&seq);
                 health.record_timeout();
             }
-            
+
             // Update failure detection based on the algorithm
-            if failure_detector == FailureDetectorAlgorithm::PhiAccrual 
-               || failure_detector == FailureDetectorAlgorithm::Adaptive {
+            if failure_detector == FailureDetectorAlgorithm::PhiAccrual
+                || failure_detector == FailureDetectorAlgorithm::Adaptive
+            {
                 health.calculate_phi();
             }
-            
+
             // Check if node is suspected failed
             if health.is_suspected_failed(failure_detector, phi_threshold) {
                 health.status = NodeStatus::Offline;
             }
         }
     }
-    
+
     /// Select nodes to ping
     async fn select_nodes_to_ping(
         node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
         batch_size: usize,
     ) -> Vec<StorageNode> {
         let health_map = node_health.read().await;
-        
+
         // Filter eligible nodes (not currently being pinged)
         let eligible_nodes: Vec<&NodeHealth> = health_map
             .values()
@@ -537,7 +542,7 @@ impl HealthMonitor {
                 health.status != NodeStatus::Offline
             })
             .collect();
-        
+
         // Randomly select up to batch_size nodes
         let mut rng = rand::thread_rng();
         eligible_nodes
@@ -545,11 +550,11 @@ impl HealthMonitor {
             .map(|health| health.node.clone())
             .collect()
     }
-    
+
     /// Get current timestamp in milliseconds
     fn current_timestamp_millis() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -565,28 +570,28 @@ impl HealthMonitor {
             public_key: "pk".to_string(),
             endpoint: "http://test.example.com".to_string(),
         };
-        
+
         let mut health = NodeHealth::new(node.clone());
-        
+
         // Add some consistent RTTs
         for _ in 0..10 {
             health.add_ping_rtt(100);
         }
-        
+
         // Phi should be low for normal operation
         let phi1 = health.calculate_phi();
         assert!(phi1 < 1.0);
-        
+
         // Simulate a delay
         std::thread::sleep(Duration::from_millis(300));
-        
+
         // Phi should increase but still relatively low
         let phi2 = health.calculate_phi();
         assert!(phi2 > phi1);
-        
+
         // Simulate a longer delay
         std::thread::sleep(Duration::from_millis(700));
-        
+
         // Phi should increase significantly
         let phi3 = health.calculate_phi();
         assert!(phi3 > phi2);

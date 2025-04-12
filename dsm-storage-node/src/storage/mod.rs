@@ -14,20 +14,20 @@ use std::sync::Arc;
 
 pub mod distributed_storage;
 pub mod epidemic_storage;
-pub use epidemic_storage::{EpidemicStorage, EpidemicStorageConfig, RegionalConsistency, PartitionStrategy};
-pub mod memory_storage;
-pub mod reconciliation;
-pub mod partition;
-pub mod small_world;
-pub mod sql_storage;
-pub mod routing;
-pub mod vector_clock;
+pub use epidemic_storage::{
+    EpidemicStorage, EpidemicStorageConfig, RegionalConsistency, PartitionStrategy,
+};
 pub mod digest;
 pub mod health;
+pub mod memory_storage;
 pub mod metrics;
+pub mod partition;
+pub mod reconciliation;
+pub mod routing;
+pub mod small_world;
+pub mod sql_storage;
 pub mod tasks;
-
-
+pub mod vector_clock;
 
 /// Storage configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -78,7 +78,8 @@ impl StorageFactory {
 
     /// Create a memory storage engine
     pub fn create_memory_storage(&self) -> Result<Arc<dyn StorageEngine + Send + Sync>> {
-        let memory_storage = memory_storage::MemoryStorage::new(memory_storage::MemoryStorageConfig::default());
+        let memory_storage =
+            memory_storage::MemoryStorage::new(memory_storage::MemoryStorageConfig::default());
         Ok(Arc::new(memory_storage))
     }
 

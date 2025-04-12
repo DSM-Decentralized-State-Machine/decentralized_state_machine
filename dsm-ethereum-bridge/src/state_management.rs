@@ -70,9 +70,9 @@ impl PersistentStateManager {
         // Use Default::default() and then modify the public fields
         let mut memory_config = MemoryStorageConfig::default();
         memory_config.max_memory_bytes = 1024 * 1024 * 1024; // 1GB
-        memory_config.max_entries = 1_000_000; 
+        memory_config.max_entries = 1_000_000;
         memory_config.eviction_policy = EvictionPolicy::LRU;
-        
+
         let memory_storage = Arc::new(MemoryStorage::new(memory_config));
 
         // Create distributed storage with the provided nodes

@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod config;
+pub mod crypto;
 pub mod distribution;
 pub mod encryption;
 pub mod error;
@@ -12,4 +13,3 @@ pub mod node_management;
 pub mod staking;
 pub mod storage;
 pub mod types;
-pub mod crypto;

@@ -40,9 +40,9 @@ pub struct DbCorruptionError {
 impl RocksDbStorage {
     /// Create a new RocksDB storage instance
     pub fn new(db_path: String) -> Self {
-        RocksDbStorage { 
-            db_path, 
-            db: None, 
+        RocksDbStorage {
+            db_path,
+            db: None,
             corruption_detected: AtomicBool::new(false),
             backup_path: PathBuf::new(),
         }
@@ -55,11 +55,11 @@ impl RocksDbStorage {
         opts.set_paranoid_checks(true);
 
         // Write optimization
-        opts.set_write_buffer_size(64 * 1024 * 1024);  // 64MB
+        opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
         opts.set_max_write_buffer_number(3);
         opts.set_min_write_buffer_number_to_merge(2);
         opts.set_target_file_size_base(64 * 1024 * 1024);
-        opts.increase_parallelism(4);  // Sets background jobs automatically
+        opts.increase_parallelism(4); // Sets background jobs automatically
 
         // Compression settings
         opts.set_compression_type(DBCompressionType::Lz4);
@@ -94,7 +94,10 @@ impl RocksDbStorage {
     }
 
     /// Execute a batch of operations atomically
-    pub async fn batch_write(&self, operations: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<(), DsmError> {
+    pub async fn batch_write(
+        &self,
+        operations: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    ) -> Result<(), DsmError> {
         match &self.db {
             Some(db) => {
                 let mut batch = WriteBatch::default();
@@ -104,7 +107,7 @@ impl RocksDbStorage {
                         None => batch.delete(&key),
                     }
                 }
-                
+
                 match db.write(batch) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(DsmError::Storage {
@@ -129,20 +132,22 @@ impl RocksDbStorage {
                     source: None,
                 })?;
 
-                let backup_opts = BackupEngineOptions::new(backup_path).map_err(|e| DsmError::Storage {
-                    context: format!("Failed to create backup options: {}", e),
-                    source: Some(Box::new(e)),
-                })?;
+                let backup_opts =
+                    BackupEngineOptions::new(backup_path).map_err(|e| DsmError::Storage {
+                        context: format!("Failed to create backup options: {}", e),
+                        source: Some(Box::new(e)),
+                    })?;
 
                 let env = Env::new().map_err(|e| DsmError::Storage {
                     context: format!("Failed to create RocksDB environment: {}", e),
                     source: Some(Box::new(e)),
                 })?;
 
-                let mut backup = BackupEngine::open(&backup_opts, &env).map_err(|e| DsmError::Storage {
-                    context: format!("Failed to open backup engine: {}", e),
-                    source: Some(Box::new(e)),
-                })?;
+                let mut backup =
+                    BackupEngine::open(&backup_opts, &env).map_err(|e| DsmError::Storage {
+                        context: format!("Failed to open backup engine: {}", e),
+                        source: Some(Box::new(e)),
+                    })?;
 
                 backup.create_new_backup(db).map_err(|e| DsmError::Storage {
                     context: format!("Backup creation failed: {}", e),
@@ -159,7 +164,7 @@ impl RocksDbStorage {
     /// Restore database from latest backup
     pub async fn restore_from_backup(&mut self) -> Result<(), DsmError> {
         self.close();
-        
+
         let backup_path = self.backup_path.to_str().ok_or_else(|| DsmError::Storage {
             context: "Invalid backup path".to_string(),
             source: None,
@@ -182,7 +187,8 @@ impl RocksDbStorage {
 
         // Use proper restore options
         let restore_opts = RestoreOptions::default();
-        backup.restore_from_latest_backup(&self.db_path, &self.db_path, &restore_opts)
+        backup
+            .restore_from_latest_backup(&self.db_path, &self.db_path, &restore_opts)
             .map_err(|e| DsmError::Storage {
                 context: format!("Backup restoration failed: {}", e),
                 source: Some(Box::new(e)),
@@ -197,7 +203,7 @@ impl RocksDbStorage {
             // Use live corruption check
             if let Err(e) = db.live_files() {
                 self.corruption_detected.store(true, Ordering::SeqCst);
-                
+
                 // If backup exists, we can't restore here since we need mutable access
                 // Instead, return an error indicating corruption and suggesting restore
                 if self.backup_path.exists() {
@@ -206,7 +212,7 @@ impl RocksDbStorage {
                         source: Some(Box::new(e)),
                     });
                 }
-                
+
                 return Err(DsmError::Storage {
                     context: format!("Database corruption detected: {}", e),
                     source: Some(Box::new(e)),

@@ -37,28 +37,28 @@ impl RateLimiter {
             counters: Mutex::new(HashMap::new()),
         }
     }
-    
+
     /// Increment request count and check rate limit
     pub fn check_rate_limit(&self, client_ip: &str) -> Result<()> {
         let now = Instant::now();
         let window_duration = Duration::from_secs(self.window_size);
-        
+
         let mut counters = self.counters.lock().unwrap();
-        
+
         // Get or initialize counter for client IP
         let counter = counters
             .entry(client_ip.to_string())
             .or_insert_with(|| (now, 0));
-            
+
         // Reset counter if window has elapsed
         if now.duration_since(counter.0) > window_duration {
             counter.0 = now;
             counter.1 = 0;
         }
-        
+
         // Increment counter
         counter.1 += 1;
-        
+
         // Check if rate limit exceeded
         if counter.1 > self.max_requests {
             return Err(StorageNodeError::RateLimitExceeded(format!(
@@ -66,9 +66,10 @@ impl RateLimiter {
                 self.max_requests, self.window_size
             )));
         }
-        
+
         Ok(())
-    }}
+    }
+}
 
 /// Get client IP from request
 #[allow(dead_code)]
@@ -81,16 +82,16 @@ fn get_client_ip(request: &Request<Body>) -> String {
             }
         }
     }
-    
+
     // Fallback to X-Real-IP header
     if let Some(header) = request.headers().get("X-Real-IP") {
         if let Ok(value) = header.to_str() {
             return value.to_string();
         }
     }
-    
+
     // TODO: Get client IP from connection info when axum supports it
-    
+
     // Fallback to unknown
     "unknown".to_string()
 }
@@ -120,13 +121,13 @@ pub async fn rate_limiting(
 ) -> Response {
     // Get client IP from headers or connection info
     let client_ip = get_client_ip(&request);
-    
+
     // Check rate limit
     if limiter.check_rate_limit(&client_ip).is_err() {
         warn!("Rate limit exceeded for client {}", client_ip);
         return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
-    
+
     // Continue to next middleware or handler
     next.run(request).await
 }
@@ -139,8 +140,10 @@ pub async fn authenticate(
     next: Next<Body>,
 ) -> Response {
     // Extract authorization header
-    let auth_header = headers.get("Authorization").map(|h| h.to_str().unwrap_or(""));
-    
+    let auth_header = headers
+        .get("Authorization")
+        .map(|h| h.to_str().unwrap_or(""));
+
     match auth_header {
         Some(auth) => {
             // Parse authorization header
@@ -148,10 +151,10 @@ pub async fn authenticate(
             if parts.len() != 2 {
                 return (StatusCode::UNAUTHORIZED, "Invalid authorization format").into_response();
             }
-            
+
             let auth_type = parts[0];
             let auth_value = parts[1];
-            
+
             // Handle different auth types
             match auth_type {
                 "Bearer" => {
@@ -159,21 +162,22 @@ pub async fn authenticate(
                     if !verify_token(auth_value) {
                         return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
                     }
-                },
+                }
                 "Signature" => {
                     // Handle signature authentication
                     if !verify_signature(auth_value) {
                         return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
                     }
-                },
+                }
                 _ => {
-                    return (StatusCode::UNAUTHORIZED, "Unsupported authentication type").into_response();
+                    return (StatusCode::UNAUTHORIZED, "Unsupported authentication type")
+                        .into_response();
                 }
             }
-            
+
             // Continue to next middleware or handler
             next.run(request).await
-        },
+        }
         None => {
             // No authentication provided
             (StatusCode::UNAUTHORIZED, "Authentication required").into_response()
@@ -183,18 +187,15 @@ pub async fn authenticate(
 
 /// Request logging middleware
 #[allow(dead_code)]
-pub async fn log_request(
-    request: Request<Body>,
-    next: Next<Body>,
-) -> Response {
+pub async fn log_request(request: Request<Body>, next: Next<Body>) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let start = Instant::now();
-    
+
     let response = next.run(request).await;
     let duration = start.elapsed();
-    
+
     debug!("Response: {} {} in {:?}", method, uri, duration);
-    
+
     response
 }

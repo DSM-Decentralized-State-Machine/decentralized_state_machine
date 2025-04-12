@@ -683,31 +683,31 @@ impl TokenStateManager {
     /// Optimize balance cache with LRU eviction and bulk loading  
     pub fn optimize_balance_cache(&self) -> Result<(), DsmError> {
         let mut cache = self.balance_cache.write();
-        
+
         // Set maximum cache size (configurable)
         const MAX_CACHE_SIZE: usize = 10_000;
-        
+
         // Evict oldest entries if cache exceeds max size
         if cache.len() > MAX_CACHE_SIZE {
             // Sort entries by key (which contains timestamp information)
             let mut entries: Vec<_> = cache.iter().collect();
             entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-            
+
             // Calculate how many entries to skip
             let entries_len = entries.len();
             let to_skip = entries_len.saturating_sub(MAX_CACHE_SIZE);
-            
+
             // Keep only the newest MAX_CACHE_SIZE entries
             let entries_to_keep: HashMap<_, _> = entries
                 .into_iter()
                 .skip(to_skip)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            
+
             // Replace cache contents with kept entries
             *cache = entries_to_keep;
         }
-        
+
         Ok(())
     }
 
@@ -720,7 +720,10 @@ impl TokenStateManager {
     }
 
     /// Update balance cache with atomic operation results
-    fn update_balance_cache(&self, new_balances: &HashMap<String, Balance>) -> Result<(), DsmError> {
+    fn update_balance_cache(
+        &self,
+        new_balances: &HashMap<String, Balance>,
+    ) -> Result<(), DsmError> {
         let mut cache = self.balance_cache.write();
         for (key, balance) in new_balances {
             cache.insert(key.clone(), balance.clone());
@@ -763,7 +766,7 @@ impl TokenStateManager {
     fn verify_forward_commitment_transition(
         &self,
         commitment: &crate::types::state_types::PreCommitment,
-        next_state: &State
+        next_state: &State,
     ) -> Result<bool, DsmError> {
         // Verify basic operation adherence
         if !self.verify_precommitment_parameters(commitment, &next_state.operation)? {
@@ -792,19 +795,22 @@ impl TokenStateManager {
         &self,
         signature: &[u8],
         public_key: &[u8],
-        message: &[u8]
+        message: &[u8],
     ) -> Result<bool, DsmError> {
         use pqcrypto_sphincsplus::sphincssha2256fsimple::{
-            PublicKey, DetachedSignature, verify_detached_signature
+            PublicKey, DetachedSignature, verify_detached_signature,
         };
 
         // Convert public key bytes to SPHINCS+ public key
-        let pk = PublicKey::from_bytes(public_key)
-            .map_err(|_| DsmError::InvalidPublicKey)?;
+        let pk = PublicKey::from_bytes(public_key).map_err(|_| DsmError::InvalidPublicKey)?;
 
-        // Convert signature bytes to SPHINCS+ signature 
-        let sig = DetachedSignature::from_bytes(signature)
-            .map_err(|_| DsmError::crypto("Invalid signature format".to_string(), None::<std::io::Error>))?;
+        // Convert signature bytes to SPHINCS+ signature
+        let sig = DetachedSignature::from_bytes(signature).map_err(|_| {
+            DsmError::crypto(
+                "Invalid signature format".to_string(),
+                None::<std::io::Error>,
+            )
+        })?;
 
         // Verify signature using SPHINCS+
         Ok(verify_detached_signature(&sig, message, &pk).is_ok())
@@ -817,7 +823,10 @@ impl TokenStateManager {
     }
 
     /// Compute commitment hash for verification
-    fn compute_commitment_hash(&self, commitment: &crate::types::state_types::PreCommitment) -> Result<Vec<u8>, DsmError> {
+    fn compute_commitment_hash(
+        &self,
+        commitment: &crate::types::state_types::PreCommitment,
+    ) -> Result<Vec<u8>, DsmError> {
         // Sort parameters for deterministic ordering
         let mut sorted_fixed: Vec<_> = commitment.fixed_parameters.iter().collect();
         sorted_fixed.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
@@ -827,11 +836,11 @@ impl TokenStateManager {
 
         // Construct commitment data
         let mut data = Vec::new();
-        
+
         // Add state hash
         data.extend_from_slice(&commitment.hash);
 
-        // Add fixed parameters in sorted order 
+        // Add fixed parameters in sorted order
         for (key, value) in sorted_fixed {
             data.extend_from_slice(key.as_bytes());
             data.extend_from_slice(value);

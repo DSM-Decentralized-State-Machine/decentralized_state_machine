@@ -170,7 +170,7 @@ struct BatchValidationState {
     validation_count: u32,
     /// Required number of validations before commitment
     required_validations: u32,
-    /// Validation signatures received 
+    /// Validation signatures received
     validation_signatures: Vec<Vec<u8>>,
 }
 
@@ -906,10 +906,14 @@ impl HashChain {
     }
 
     /// Validate a batch and update its state
-    pub fn validate_batch(&mut self, batch_id: u64, validator_signature: Vec<u8>) -> Result<(), DsmError> {
+    pub fn validate_batch(
+        &mut self,
+        batch_id: u64,
+        validator_signature: Vec<u8>,
+    ) -> Result<(), DsmError> {
         // Get current batch status
         let status = self.get_batch_status(batch_id)?;
-        
+
         if status != BatchStatus::Finalized {
             return Err(DsmError::validation(
                 format!("Cannot validate batch that is not Finalized: {:?}", status),
@@ -918,16 +922,19 @@ impl HashChain {
         }
 
         // Get or create validation state
-        let validation_state = self.batch_validation_state.entry(batch_id).or_insert(
-            BatchValidationState {
-                validation_count: 0,
-                required_validations: 2, // Configurable requirement
-                validation_signatures: Vec::new(),
-            }
-        );
+        let validation_state =
+            self.batch_validation_state
+                .entry(batch_id)
+                .or_insert(BatchValidationState {
+                    validation_count: 0,
+                    required_validations: 2, // Configurable requirement
+                    validation_signatures: Vec::new(),
+                });
 
         // Add validation
-        validation_state.validation_signatures.push(validator_signature);
+        validation_state
+            .validation_signatures
+            .push(validator_signature);
         validation_state.validation_count += 1;
 
         // Check if enough validations received
@@ -940,20 +947,25 @@ impl HashChain {
     }
 
     /// Internal helper to transition batch state
-    fn transition_batch_state(&mut self, batch_id: u64, new_status: BatchStatus) -> Result<(), DsmError> {
+    fn transition_batch_state(
+        &mut self,
+        batch_id: u64,
+        new_status: BatchStatus,
+    ) -> Result<(), DsmError> {
         // Get current status
         let current_status = self.get_batch_status(batch_id)?;
-        
+
         // Validate state transition
         match (current_status, &new_status) {
             // Valid transitions
             (BatchStatus::Pending, BatchStatus::Finalized) => Ok(()),
             (BatchStatus::Finalized, BatchStatus::Committed) => Ok(()),
-            
+
             // Invalid transitions
-            (current, new) => Err(DsmError::invalid_operation(
-                format!("Invalid batch state transition from {:?} to {:?}", current, new)
-            )),
+            (current, new) => Err(DsmError::invalid_operation(format!(
+                "Invalid batch state transition from {:?} to {:?}",
+                current, new
+            ))),
         }?;
 
         // Update status
