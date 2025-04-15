@@ -189,6 +189,14 @@ impl EpidemicStorageEngine {
             network_client,
             metrics,
         };
+        
+        // Schedule periodic tasks for epidemic propagation
+        let engine_clone = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = engine_clone.init_periodic_tasks().await {
+                tracing::error!("Failed to initialize periodic tasks: {}", e);
+            }
+        });
 
         Ok(engine)
     }
@@ -275,12 +283,57 @@ impl EpidemicStorageEngine {
         Ok(())
     }
     
-    #[allow(dead_code)]
     fn get_blinded_state_digest(&self) -> HashMap<String, BlindedStateEntry> {
-        // Return an empty HashMap for now to address compilation errors
-        // In the full implementation, this would iterate through the store
-        // and create blinded entries with proper fields
-        HashMap::new()
+        let mut digest = HashMap::new();
+        
+        for entry in self.local_store.iter() {
+            let key = entry.key().clone();
+            let value = entry.value();
+            
+            // Skip tombstones (empty values)
+            if value.value.is_empty() {
+                continue;
+            }
+            
+            let timestamp = value.timestamp.duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let blinded_entry = BlindedStateEntry {
+                blinded_id: key.clone(),
+                encrypted_payload: value.value.clone(),
+                ttl: 3600, // Default TTL
+                region: "default".to_string(),
+                priority: 0,
+                proof_hash: [0u8; 32], // Empty proof hash for now
+                metadata: HashMap::new(),
+                timestamp,
+            };
+
+            digest.insert(key, blinded_entry);
+        }
+        
+        digest
+    }
+    
+    // Initialize periodic tasks for epidemic propagation
+    async fn init_periodic_tasks(&self) -> Result<()> {
+        // Use get_blinded_state_digest to synchronize with peers periodically
+        let self_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+                self_clone.config.gossip_interval_ms,
+            ));
+            loop {
+                interval.tick().await;
+                // Get current state digest
+                let digest = self_clone.get_blinded_state_digest();
+                // In a real implementation, you would send this digest to peers
+                tracing::debug!("Generated state digest with {} entries", digest.len());
+                // ... synchronization logic with peers would go here
+            }
+        });
+        Ok(())
     }
 }
 

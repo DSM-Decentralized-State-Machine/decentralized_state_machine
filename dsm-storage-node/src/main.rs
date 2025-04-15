@@ -4,18 +4,20 @@ use std::process;
 use std::sync::Arc;
 
 use axum::{
-    extract::Extension,
+    extract::{Extension, Path as AxumPath},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, delete},
-    Router,
+    Json, Router,
 };
 use clap::{Parser, Subcommand};
 use config::{Config, ConfigError, File};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Define command line arguments
@@ -111,11 +113,189 @@ impl std::ops::Deref for AppConfig {
     }
 }
 
+// Actual storage implementation
+enum StorageEngine {
+    Memory(MemoryStorage),
+    Sqlite(SqliteStorage),
+}
+
+impl StorageEngine {
+    async fn store(&self, key: String, value: Value) -> Result<(), String> {
+        match self {
+            StorageEngine::Memory(storage) => storage.store(key, value),
+            StorageEngine::Sqlite(storage) => storage.store(key, value).await,
+        }
+    }
+
+    async fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
+        match self {
+            StorageEngine::Memory(storage) => storage.retrieve(key),
+            StorageEngine::Sqlite(storage) => storage.retrieve(key).await,
+        }
+    }
+
+    async fn delete(&self, key: &str) -> Result<bool, String> {
+        match self {
+            StorageEngine::Memory(storage) => storage.delete(key),
+            StorageEngine::Sqlite(storage) => storage.delete(key).await,
+        }
+    }
+}
+
+struct MemoryStorage {
+    data: std::sync::RwLock<std::collections::HashMap<String, Value>>,
+}
+
+impl MemoryStorage {
+    fn new() -> Self {
+        Self {
+            data: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn store(&self, key: String, value: Value) -> Result<(), String> {
+        let mut data = self.data.write().unwrap();
+        data.insert(key, value);
+        Ok(())
+    }
+
+    fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
+        let data = self.data.read().unwrap();
+        Ok(data.get(key).cloned())
+    }
+
+    fn delete(&self, key: &str) -> Result<bool, String> {
+        let mut data = self.data.write().unwrap();
+        Ok(data.remove(key).is_some())
+    }
+}
+
+struct SqliteStorage {
+    db_path: PathBuf,
+}
+
+impl SqliteStorage {
+    fn new(db_path: PathBuf) -> Self {
+        Self { db_path }
+    }
+
+    fn initialize_schema(&self) -> Result<(), String> {
+        debug!("Initializing SQLite database schema at {:?}", self.db_path);
+        
+        // Create the parent directory if it doesn't exist
+        if let Some(parent) = self.db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+        
+        let conn = Connection::open(&self.db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+        
+        // Create the data table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS data_entries (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        ).map_err(|e| format!("Failed to create data_entries table: {}", e))?;
+        
+        // Create index on timestamp for efficient pruning
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_data_entries_timestamp ON data_entries(timestamp)",
+            [],
+        ).map_err(|e| format!("Failed to create timestamp index: {}", e))?;
+        
+        debug!("SQLite database schema initialized successfully");
+        Ok(())
+    }
+    
+    async fn store(&self, key: String, value: Value) -> Result<(), String> {
+        // Serialize the value to a JSON string
+        let value_str = serde_json::to_string(&value)
+            .map_err(|e| format!("Failed to serialize value: {}", e))?;
+        
+        // Run the database operation in a blocking task
+        let db_path = self.db_path.clone();
+        let key_for_logging = key.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let conn = Connection::open(&db_path)
+                .map_err(|e| format!("Failed to open database: {}", e))?;
+            
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            
+            conn.execute(
+                "INSERT OR REPLACE INTO data_entries (key, value, timestamp) VALUES (?, ?, ?)",
+                params![key, value_str, timestamp],
+            ).map_err(|e| format!("Failed to store data: {}", e))?;
+            
+            Ok(())
+        }).await.map_err(|e| format!("Task panicked: {}", e))??;
+        
+        debug!("Data stored successfully with key: {}", key_for_logging);
+        Ok(())
+    }
+    
+    async fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
+        let key_string = key.to_string();
+        let db_path = self.db_path.clone();
+        
+        let result = tokio::task::spawn_blocking(move || -> Result<Option<Value>, String> {
+            let conn = Connection::open(&db_path)
+                .map_err(|e| format!("Failed to open database: {}", e))?;
+            
+            let mut stmt = conn.prepare("SELECT value FROM data_entries WHERE key = ?")
+                .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+            
+            let mut rows = stmt.query(params![key_string])
+                .map_err(|e| format!("Failed to execute query: {}", e))?;
+            
+            if let Some(row) = rows.next().map_err(|e| format!("Failed to retrieve row: {}", e))? {
+                let value_str: String = row.get(0)
+                    .map_err(|e| format!("Failed to get value from row: {}", e))?;
+                
+                let value: Value = serde_json::from_str(&value_str)
+                    .map_err(|e| format!("Failed to deserialize value: {}", e))?;
+                
+                Ok(Some(value))
+            } else {
+                Ok(None)
+            }
+        }).await.map_err(|e| format!("Task panicked: {}", e))??;
+        
+        debug!("Data retrieval completed for key: {}", key);
+        Ok(result)
+    }
+    
+    async fn delete(&self, key: &str) -> Result<bool, String> {
+        let key_for_logging = key.to_string();
+        let key = key.to_string();
+        let db_path = self.db_path.clone();
+        
+        let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let conn = Connection::open(&db_path)
+                .map_err(|e| format!("Failed to open database: {}", e))?;
+            
+            let count = conn.execute(
+                "DELETE FROM data_entries WHERE key = ?",
+                params![key],
+            ).map_err(|e| format!("Failed to delete data: {}", e))?;
+            
+            Ok(count > 0)
+        }).await.map_err(|e| format!("Task panicked: {}", e))??;
+        debug!("Data deletion completed for key: {}, deleted: {}", key_for_logging, result);
+        Ok(result)
+    }
+}
+
 // State representation
 struct AppState {
     config: AppConfig,
     staked_amount: Option<u64>,
-    // Add other state components as needed (db connection, etc.)
+    storage: StorageEngine,
 }
 
 // API response structures
@@ -135,6 +315,13 @@ struct StatusResponse {
 #[allow(dead_code)]
 struct ErrorResponse {
     error: String,
+}
+
+// Data response structure
+#[derive(Serialize, Deserialize)]
+struct DataResponse {
+    key: String,
+    data: Value,
 }
 
 // Helper function to load configuration
@@ -165,28 +352,62 @@ async fn status_handler(
         staked_amount: state.staked_amount,
     };
     
-    (StatusCode::OK, axum::Json(status))
+    (StatusCode::OK, Json(status))
 }
 
 async fn store_data_handler(
-    // Add parameters for key and data
+    Extension(state): Extension<Arc<RwLock<AppState>>>,
+    AxumPath(key): AxumPath<String>,
+    Json(data): Json<Value>,
 ) -> impl IntoResponse {
-    // Placeholder implementation
-    StatusCode::OK
+    debug!("Storing data with key: {}", key);
+    
+    let state = state.read().await;
+    match state.storage.store(key, data).await {
+        Ok(()) => StatusCode::OK,
+        Err(err) => {
+            error!("Failed to store data: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 async fn retrieve_data_handler(
-    // Add parameters for key
+    Extension(state): Extension<Arc<RwLock<AppState>>>,
+    AxumPath(key): AxumPath<String>,
 ) -> impl IntoResponse {
-    // Placeholder implementation
-    StatusCode::OK
+    debug!("Retrieving data with key: {}", key);
+    
+    let state = state.read().await;
+    match state.storage.retrieve(&key).await {
+        Ok(Some(data)) => {
+            (StatusCode::OK, Json(data))
+        },
+        Ok(None) => {
+            (StatusCode::NOT_FOUND, Json(Value::Null))
+        },
+        Err(err) => {
+            error!("Failed to retrieve data: {}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(Value::Null))
+        }
+    }
 }
 
 async fn delete_data_handler(
-    // Add parameters for key
+    Extension(state): Extension<Arc<RwLock<AppState>>>,
+    AxumPath(key): AxumPath<String>,
 ) -> impl IntoResponse {
-    // Placeholder implementation
-    StatusCode::OK
+    debug!("Deleting data with key: {}", key);
+    
+    let state = state.read().await;
+    match state.storage.delete(&key).await {
+        Ok(true) => StatusCode::OK,
+        Ok(false) => StatusCode::NOT_FOUND,
+        Err(err) => {
+            error!("Failed to delete data: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 async fn list_peers_handler(
@@ -209,7 +430,7 @@ fn create_router(state: Arc<RwLock<AppState>>) -> Router {
 }
 
 // Initialize storage based on configuration
-async fn init_storage(config: &StorageConfig) -> Result<(), anyhow::Error> {
+async fn init_storage(config: &StorageConfig) -> Result<StorageEngine, anyhow::Error> {
     // Create data directory if it doesn't exist
     tokio::fs::create_dir_all(&config.data_dir).await?;
     
@@ -217,19 +438,31 @@ async fn init_storage(config: &StorageConfig) -> Result<(), anyhow::Error> {
     match config.engine.as_str() {
         "sqlite" => {
             info!("Initializing SQLite storage engine at {}", config.database_path);
-            // Actual implementation would initialize the SQLite database
+            let db_path = PathBuf::from(&config.database_path);
+            let sqlite_storage = SqliteStorage::new(db_path);
+            sqlite_storage.initialize_schema()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize SQLite schema: {}", e))?;
+            
+            Ok(StorageEngine::Sqlite(sqlite_storage))
         },
         "memory" => {
             info!("Initializing in-memory storage engine");
-            // Actual implementation would initialize in-memory storage
+            let memory_storage = MemoryStorage::new();
+            Ok(StorageEngine::Memory(memory_storage))
+        },
+        "epidemic" => {
+            info!("Initializing epidemic storage engine");
+            // For the epidemic storage, we need to use the DSM module's storage engine
+            // The epidemic storage is handled separately in the run_storage_node function
+            // This stub allows the epidemic storage type to be recognized
+            let memory_storage = MemoryStorage::new(); // Use memory as a fallback for initial testing
+            Ok(StorageEngine::Memory(memory_storage))
         },
         _ => {
             error!("Unsupported storage engine: {}", config.engine);
-            return Err(anyhow::anyhow!("Unsupported storage engine"));
+            Err(anyhow::anyhow!("Unsupported storage engine"))
         }
     }
-    
-    Ok(())
 }
 
 // Initialize networking based on configuration
@@ -264,7 +497,7 @@ async fn process_staking(amount: u64) -> Result<(), anyhow::Error> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+pub async fn main() -> Result<(), anyhow::Error> {
     // Initialize tracing for logs
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -308,18 +541,21 @@ async fn main() -> Result<(), anyhow::Error> {
         },
     };
     
+    // Initialize storage
+    let storage = match init_storage(&config.storage).await {
+        Ok(storage) => storage,
+        Err(e) => {
+            error!("Failed to initialize storage: {}", e);
+            process::exit(1);
+        }
+    };
+    
     // Create application state
     let state = Arc::new(RwLock::new(AppState {
         config: config.clone(),
         staked_amount,
-        // Initialize other state components as needed
+        storage,
     }));
-    
-    // Initialize storage
-    if let Err(e) = init_storage(&config.storage).await {
-        error!("Failed to initialize storage: {}", e);
-        process::exit(1);
-    }
     
     // Initialize networking
     if let Err(e) = init_networking(&config.network).await {
