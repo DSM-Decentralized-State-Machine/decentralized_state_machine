@@ -43,7 +43,7 @@ The DSM project implements the following security primitives:
 For security issues related to the DSM implementation, please:
 
 1. **DO NOT** disclose the vulnerability publicly
-2. Email security@decentralizedstatemachine.com with detailed information
+2. Email info@decentralizedstatemachine.com with detailed information
 3. Allow up to 48 hours for initial response
 4. Work with the development team to understand and address the issue
 5. Follow coordinated disclosure practices once mitigation is available
