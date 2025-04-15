@@ -77,7 +77,7 @@ endpoint = "http://127.0.0.1:8080"
 
 # Storage configuration
 [storage]
-engine = "sqlite"
+engine = "sqlite"  # Options: "sqlite", "memory", "epidemic"
 capacity = 10737418240  # 10 GB
 data_dir = "./data"
 database_path = "./data/storage.db"
@@ -88,6 +88,14 @@ min_regions = 2
 default_ttl = 0  # No expiration by default
 enable_pruning = true
 pruning_interval = 3600  # 1 hour
+# Epidemic storage specific settings (only needed when engine = "epidemic")
+gossip_interval_ms = 5000  # 5 seconds between gossip rounds
+anti_entropy_interval_ms = 30000  # 30 seconds for full synchronization
+max_entries_per_gossip = 100  # Maximum entries per gossip message
+gossip_fanout = 3  # Number of peers to gossip with each round
+enable_small_world = true  # Use small-world topology
+max_immediate_neighbors = 16  # Maximum close neighbors
+max_long_links = 15  # Maximum long-distance links
 
 # Network configuration
 [network]
@@ -133,17 +141,156 @@ format = "text"
 console_logging = true
 ```
 
-## Step 4: Build the Storage Node
+## Step 4: Configure and Use Different Storage Engines
 
-Build the DSM storage node from source:
+The DSM storage node supports multiple storage engines to meet different needs. Here's how to configure and use each one:
 
-```bash
-cargo build --release -p dsm-storage-node
+### SQLite Storage (Default)
+
+SQLite storage is persistent and ideal for production environments where data durability is important.
+
+```toml
+# In your config.toml
+[storage]
+engine = "sqlite"
+database_path = "./data/storage.db"
+# Other storage settings...
 ```
 
-## Step 5: Run the Storage Node
+Run the node with:
+```bash
+./target/release/dsm-storage-node --config config.toml run
+```
 
-Now you can run the DSM storage node with your configuration:
+### In-Memory Storage
+
+In-memory storage is fast but volatile (data is lost when the node restarts). It's ideal for testing and development.
+
+```toml
+# In your config.toml or create a new config-memory.toml
+[storage]
+engine = "memory"
+# Other storage settings...
+```
+
+Run the node with:
+```bash
+./target/release/dsm-storage-node --config config-memory.toml run
+```
+
+### Epidemic Storage (Distributed)
+
+Epidemic storage provides a distributed storage solution using gossip protocols with a small-world topology. It's ideal for large-scale deployments requiring high availability and fault tolerance.
+
+Create a specific configuration file for epidemic storage (e.g., config-epidemic.toml):
+
+```toml
+# In config-epidemic.toml
+[storage]
+engine = "epidemic"
+data_dir = "./data"
+database_path = "./data/epidemic-storage.db"
+# Epidemic-specific settings
+gossip_interval_ms = 5000  # 5 seconds between gossip rounds
+anti_entropy_interval_ms = 30000  # 30 seconds for synchronization
+max_entries_per_gossip = 100  # Maximum entries per gossip message
+gossip_fanout = 3  # Number of peers to gossip with each round
+enable_small_world = true  # Use small-world topology
+max_immediate_neighbors = 16  # Maximum close neighbors
+max_long_links = 15  # Maximum long-distance links
+
+[network]
+# Network settings are especially important for epidemic storage
+listen_addr = "0.0.0.0"
+public_endpoint = "http://localhost:8080"  # Change to your public IP in production
+bootstrap_nodes = [
+    "http://bootstrap1.dsm.network:8080",
+    "http://bootstrap2.dsm.network:8080"
+]
+enable_discovery = true
+```
+
+Run the node with:
+```bash
+./target/release/dsm-storage-node --config config-epidemic.toml run
+```
+
+#### Testing Multi-Node Epidemic Storage
+
+To properly test epidemic storage, you should run multiple nodes that can communicate with each other:
+
+1. Create multiple configuration files with different ports and node IDs:
+   - config-epidemic-node1.toml (port 8080)
+   - config-epidemic-node2.toml (port 8081)
+   - config-epidemic-node3.toml (port 8082)
+
+2. Ensure each node lists the others as bootstrap nodes.
+
+3. Run each node in a separate terminal:
+   ```bash
+   # Terminal 1
+   ./target/release/dsm-storage-node --config config-epidemic-node1.toml run
+   
+   # Terminal 2
+   ./target/release/dsm-storage-node --config config-epidemic-node2.toml run
+   
+   # Terminal 3
+   ./target/release/dsm-storage-node --config config-epidemic-node3.toml run
+   ```
+
+4. Test data propagation by storing data in one node and verifying it propagates to the others:
+   ```bash
+   # Store data in node 1
+   curl -X PUT http://localhost:8080/api/v1/data/test-key -d '{"value":"test data"}'
+   
+   # After a brief delay for gossip propagation (5-10 seconds)...
+   
+   # Verify data exists in node 2
+   curl http://localhost:8081/api/v1/data/test-key
+   
+   # Verify data exists in node 3
+   curl http://localhost:8082/api/v1/data/test-key
+   ```
+
+You can use the included test script for automated testing:
+```bash
+./test_epidemic_storage.sh
+```
+
+## Step 5: Build the Storage Node
+
+To build the DSM storage node from source, follow these steps:
+
+```bash
+# Clone the repository if you haven't already
+git clone https://github.com/dsm-project/decentralized-state-machine.git
+cd DSM_Decentralized_State_Machine
+
+# Update dependencies
+rustup update
+
+# Build the storage node in release mode
+cargo build --release -p dsm-storage-node
+
+# Verify the build
+ls -la target/release/dsm-storage-node
+```
+
+This will compile the storage node with optimizations for production use. The executable will be located at `target/release/dsm-storage-node`.
+
+For macOS users, you can use the provided script to create an optimized build:
+```bash
+./scripts/macos_release.sh
+```
+
+For Linux users:
+```bash
+./scripts/build.sh --release
+```
+
+## Step 6: Run the Storage Node
+
+After building, you can run the DSM storage node with your configuration:
 
 ```bash
 ./target/release/dsm-storage-node --config dsm-storage-node/config.toml run
