@@ -1,6 +1,23 @@
-version: 2
-updates:
-  - package-ecosystem: "cargo"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+# version: 2
+# updates:
+#   - package-ecosystem: "npm"
+#     directory: "/"
+#     schedule:
+#       interval: "daily"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    assignees:
+      - "dsm-project/maintainers"
+
+# - package-ecosystem: "github-actions"
+#     directory: "/"
+#     schedule:
+#       interval: "weekly"
+#     open-pull-requests-limit: 10
+#     labels:
+#       - "dependencies"
+#       - "github-actions"
+#     assignees:
+#       - "dsm-project/maintainers"

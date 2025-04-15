@@ -1,10 +1,42 @@
-// Routing module for epidemic storage with small-world topology
+// Routing module for epidemic storage with distributed topology
 //
-// This module implements efficient routing strategies for the small-world topology
+// This module implements efficient routing strategies for the distributed topology
 // to ensure optimal message delivery and request handling.
 
-use crate::storage::small_world::{NodeId, SmallWorldTopology, Distance, calculate_key_hash};
+use crate::storage::topology::{NodeId, HybridTopology, Distance, calculate_key_hash};
 use crate::types::StorageNode;
+
+// Add From implementations for convenience
+impl From<&StorageNode> for NodeId {
+    fn from(node: &StorageNode) -> Self {
+        NodeId::from_string(&node.id).expect("Failed to create NodeId from StorageNode")
+    }
+}
+
+impl From<&crate::storage::topology::NodeInfo> for NodeId {
+    fn from(node: &crate::storage::topology::NodeInfo) -> Self {
+        node.node_id.clone()
+    }
+}
+
+// Add From implementation for NodeInfo to StorageNode conversion
+impl From<&crate::storage::topology::NodeInfo> for StorageNode {
+    fn from(node_info: &crate::storage::topology::NodeInfo) -> Self {
+        StorageNode {
+            id: node_info.node_id.to_string(),
+            name: format!("Node {}", node_info.node_id),
+            region: node_info.region.map_or_else(|| "unknown".to_string(), |r| r.to_string()),
+            public_key: "key-placeholder".to_string(), // Placeholder
+            endpoint: node_info.address.to_string(),
+        }
+    }
+}
+
+impl From<crate::storage::topology::NodeInfo> for StorageNode {
+    fn from(node_info: crate::storage::topology::NodeInfo) -> Self {
+        StorageNode::from(&node_info)
+    }
+}
 
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -52,7 +84,7 @@ pub enum RoutingStrategy {
     Hybrid,
 }
 
-/// Routing table for the small-world topology
+/// Routing table for the distributed topology
 pub struct RoutingTable {
     /// Node ID of the local node
     self_id: NodeId,
@@ -75,14 +107,14 @@ pub struct RoutingTable {
 
     /// Maximum route cache age
     max_cache_age: Duration,
-    topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
+    topology: Arc<parking_lot::RwLock<HybridTopology>>,
 }
 
 impl RoutingTable {
     /// Create a new routing table
     pub fn new(
         self_id: NodeId,
-        topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
+        topology: Arc<parking_lot::RwLock<HybridTopology>>,
         strategy: RoutingStrategy,
     ) -> Self {
         Self {
@@ -206,19 +238,19 @@ impl RoutingTable {
 
         // Start with immediate neighbors
         for neighbor in topology_guard.immediate_neighbors() {
-            let neighbor_id = NodeId::from(neighbor);
+            let neighbor_id = NodeId::from(&neighbor);
             visited.insert(neighbor_id.clone());
             queue.push_back(neighbor_id.clone());
-            paths.insert(neighbor_id, vec![neighbor.clone()]);
+            paths.insert(neighbor_id, vec![neighbor.clone().into()]);
         }
 
         // Also consider long links
         for link in topology_guard.long_links() {
-            let link_id = NodeId::from(link);
+            let link_id = NodeId::from(&link);
             if !visited.contains(&link_id) {
                 visited.insert(link_id.clone());
                 queue.push_back(link_id.clone());
-                paths.insert(link_id, vec![link.clone()]);
+                paths.insert(link_id, vec![link.clone().into()]);
             }
         }
 
@@ -241,12 +273,12 @@ impl RoutingTable {
 
             // Get the current node
             let current_node = match topology_guard.get_node(&current_id) {
-                Some(node) => node,
+                Some(node) => StorageNode::from(node),
                 None => continue,
             };
 
             // Get neighbors of the current node
-            let neighbors = self.get_node_neighbors(current_node, &topology_guard);
+            let neighbors = self.get_node_neighbors(&current_node, &topology_guard);
 
             for neighbor in neighbors {
                 let neighbor_id = NodeId::from(&neighbor);
@@ -285,7 +317,7 @@ impl RoutingTable {
     fn get_node_neighbors(
         &self,
         node: &StorageNode,
-        topology: &SmallWorldTopology,
+        topology: &HybridTopology,
     ) -> Vec<StorageNode> {
         // This is a simplified approach; in a real implementation, we would need
         // to query the node for its neighbors or use a more sophisticated approach
@@ -295,7 +327,12 @@ impl RoutingTable {
         let mut potential_neighbors = Vec::new();
 
         // Assume nodes close to this node in ID space might be its neighbors
-        potential_neighbors.extend(topology.find_closest_nodes(&node_id, 5, None));
+        potential_neighbors.extend(
+            topology
+                .find_closest_nodes(&node_id, 5)
+                .into_iter()
+                .map(StorageNode::from)
+        );
 
         potential_neighbors
     }
@@ -389,12 +426,12 @@ impl RoutingTable {
     fn greedy_routing(
         &self,
         target: &NodeId,
-        topology: &SmallWorldTopology,
+        topology: &HybridTopology,
     ) -> Option<StorageNode> {
-        let closest = topology.find_closest_nodes(target, 1, None);
+        let closest = topology.find_closest_nodes(target, 1);
 
         if !closest.is_empty() {
-            Some(closest[0].clone())
+            Some(closest[0].clone().into())
         } else {
             None
         }
@@ -404,9 +441,9 @@ impl RoutingTable {
     fn perimeter_routing(
         &self,
         target: &NodeId,
-        topology: &SmallWorldTopology,
+        topology: &HybridTopology,
     ) -> Option<StorageNode> {
-        let mut closest = topology.find_closest_nodes(target, 5, None);
+        let mut closest = topology.find_closest_nodes(target, 5);
 
         // Filter out failed routes
         let target_dist = self.self_id.xor_distance(target);
@@ -422,9 +459,8 @@ impl RoutingTable {
         });
 
         if !closest.is_empty() {
-            Some(closest[0].clone())
+            Some(closest[0].clone().into())
         } else {
-            // Fall back to greedy if perimeter doesn't work
             self.greedy_routing(target, topology)
         }
     }
@@ -433,15 +469,15 @@ impl RoutingTable {
     fn probabilistic_routing(
         &self,
         target: &NodeId,
-        topology: &SmallWorldTopology,
+        topology: &HybridTopology,
     ) -> Option<StorageNode> {
-        let closest = topology.find_closest_nodes(target, 3, None);
+        let closest = topology.find_closest_nodes(target, 3);
 
         if !closest.is_empty() {
             // Simple probabilistic approach - choose randomly from top 3
             use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
-            closest.choose(&mut rng).cloned()
+            closest.choose(&mut rng).map(|n| StorageNode::from(n.clone()))
         } else {
             None
         }
@@ -451,7 +487,7 @@ impl RoutingTable {
     fn hybrid_routing(
         &self,
         target: &NodeId,
-        topology: &SmallWorldTopology,
+        topology: &HybridTopology,
     ) -> Option<StorageNode> {
         // Try greedy first
         let greedy_result = self.greedy_routing(target, topology);
@@ -467,16 +503,20 @@ impl RoutingTable {
                 return self.perimeter_routing(target, topology);
             }
         }
-
-        greedy_result
+    greedy_result
     }
 
-    /// Find responsible nodes for a key
+    /// Find responsible nodes for a hash key
     pub fn find_responsible_nodes(&self, key: &[u8], count: usize) -> Vec<StorageNode> {
-        let key_hash = calculate_key_hash(key);
+        let key_hash = calculate_key_hash(std::str::from_utf8(key).unwrap_or_default());
+        let target_id = NodeId::from_string(&key_hash.to_string()).unwrap_or_else(|_| self.self_id.clone());
         let topology_guard = self.topology.read();
-        topology_guard.find_responsible_nodes(&key_hash, count)
+        topology_guard.find_closest_nodes(&target_id, count)
+            .into_iter()
+            .map(StorageNode::from)
+            .collect()
     }
+
 
     /// Find responsible nodes for a blinded ID
     pub fn find_responsible_nodes_for_id(
@@ -508,7 +548,7 @@ impl EpidemicRouter {
     /// Create a new epidemic router
     pub fn new(
         self_id: NodeId,
-        topology: Arc<parking_lot::RwLock<SmallWorldTopology>>,
+        topology: Arc<parking_lot::RwLock<HybridTopology>>,
         strategy: RoutingStrategy,
         max_hops: usize,
     ) -> Self {
@@ -600,86 +640,104 @@ impl EpidemicRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::small_world::SmallWorldConfig;
+    use crate::storage::topology::HybridTopologyConfig;
+    use std::net::SocketAddr;
+
+    // Simple test struct for routing table tests
+    #[derive(Debug, Clone)]
+    struct TestNode {
+        node_id: String,
+        endpoint: String,
+        #[allow(dead_code)]
+        rtt_ms: u32,
+        region: String,
+        public_key: Vec<u8>,
+    }
+
+    impl From<TestNode> for StorageNode {
+        fn from(node: TestNode) -> Self {
+            StorageNode {
+                id: node.node_id.clone(),
+                name: format!("Node {}", node.node_id),
+                region: node.region.clone(),
+                public_key: hex::encode(&node.public_key),
+                endpoint: node.endpoint.clone(),
+            }
+        }
+    }
 
     #[test]
     fn test_routing_table() {
+        // Create a simple routing table for testing
+        // Using a valid 64-character hex string for NodeId (32 bytes)
+        let self_id = NodeId::from_string("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let topology = Arc::new(parking_lot::RwLock::new(
+            HybridTopology::new(self_id.clone(), HybridTopologyConfig::default(), None)
+        ));
+        let table = RoutingTable::new(self_id.clone(), topology.clone(), RoutingStrategy::Greedy);
+
         // Create test nodes
-        let self_id = NodeId::from_string("self");
-        let node1 = StorageNode {
-            id: "node1".to_string(),
-            name: "Node 1".to_string(),
-            region: "test".to_string(),
-            public_key: "pk1".to_string(),
-            endpoint: "http://node1.example.com".to_string(),
-        };
-        let node2 = StorageNode {
-            id: "node2".to_string(),
-            name: "Node 2".to_string(),
-            region: "test".to_string(),
-            public_key: "pk2".to_string(),
-            endpoint: "http://node2.example.com".to_string(),
+        let node1 = TestNode {
+            node_id: "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            endpoint: "endpoint1".to_string(),
+            rtt_ms: 100,
+            region: "us-west".to_string(),
+            public_key: vec![1, 2, 3],
         };
 
-        // Create topology with an empty immediate neighbors list to prevent any potential hanging
-        let self_node = StorageNode {
-            id: "self".to_string(),
-            name: "Self Node".to_string(),
-            region: "test".to_string(),
-            public_key: "pk-self".to_string(),
-            endpoint: "http://self.example.com".to_string(),
+        let node2 = TestNode {
+            node_id: "2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            endpoint: "endpoint2".to_string(),
+            rtt_ms: 150,
+            region: "us-east".to_string(),
+            public_key: vec![4, 5, 6],
         };
 
-        let config = SmallWorldConfig {
-            max_bucket_size: 4,
-            max_immediate_neighbors: 4,
-            max_long_links: 4,
-        };
-
-        let topology = SmallWorldTopology::new(self_node, config);
-
-        // Add test nodes to topology explicitly
+        // Add nodes to topology
         {
-            let mut topo = topology.clone();
-            topo.add_node(node1.clone());
-            topo.add_node(node2.clone());
+            let mut topo = topology.write();
+            let node1_id = NodeId::from_string(&node1.node_id).unwrap();
+            let node2_id = NodeId::from_string(&node2.node_id).unwrap();
+            
+            // Parse string addresses to SocketAddr
+            let addr1 = node1.endpoint.parse::<SocketAddr>().unwrap_or_else(|_| "127.0.0.1:8000".parse().unwrap());
+            let addr2 = node2.endpoint.parse::<SocketAddr>().unwrap_or_else(|_| "127.0.0.1:8001".parse().unwrap());
+            
+            // Parse region strings to u8
+            let region1 = Some(1u8); // Simplified mapping
+            let region2 = Some(2u8); // Simplified mapping
+            
+            // Call add_node with the required individual parameters
+            topo.add_node(node1_id.clone(), addr1, region1, 80).unwrap();
+            
+            // Call add_node with the required individual parameters
+            topo.add_node(node2_id.clone(), addr2, region2, 75).unwrap();
         }
 
-        let topology_arc = Arc::new(parking_lot::RwLock::new(topology));
+        // Add entries to routing table
+        table.update_entry(node1.clone().into(), 100, None);
+        table.update_entry(node2.clone().into(), 150, None);
 
-        // Create routing table with a smaller cache to avoid excessive memory usage
-        let table = RoutingTable::new(
-            self_id.clone(),
-            topology_arc.clone(),
-            RoutingStrategy::Greedy,
-        );
+        // Test direct node lookup through topology
+        let node1_id = NodeId::from_string(&node1.node_id).unwrap();
+        let node2_id = NodeId::from_string(&node2.node_id).unwrap();
 
-        // Add entries
-        table.update_entry(node1.clone(), 1, None);
-        table.update_entry(node2.clone(), 2, Some(node1.clone()));
-
-        // Test find_next_hop with direct lookup (avoiding any potential routing calculation)
-        let node1_id = NodeId::from_string("node1");
-        let node2_id = NodeId::from_string("node2");
-
-        // Test with entries we explicitly added
+        // Test find_next_hop with direct lookup
         let next_hop1 = table.find_next_hop(&node1_id);
         assert!(next_hop1.is_some());
-        assert_eq!(next_hop1.unwrap().id, node1.id);
+        let next_hop1_unwrapped = next_hop1.unwrap();
+        assert_eq!(next_hop1_unwrapped.id, node1.node_id);
 
         let next_hop2 = table.find_next_hop(&node2_id);
         assert!(next_hop2.is_some());
-        assert_eq!(next_hop2.unwrap().id, node1.id);
+        let next_hop2_unwrapped = next_hop2.unwrap();
+        assert_eq!(next_hop2_unwrapped.id, node2.node_id);
 
         // Test mark_route_failed and mark_route_success
         table.mark_route_failed(&self_id, &node1_id);
-        assert!(table
-            .failed_routes
-            .contains_key(&(self_id.clone(), node1_id.clone())));
+        assert!(table.failed_routes.contains_key(&(self_id.clone(), node1_id.clone())));
 
         table.mark_route_success(&node1_id);
-        assert!(!table
-            .failed_routes
-            .contains_key(&(self_id.clone(), node1_id.clone())));
+        assert!(!table.failed_routes.contains_key(&(self_id.clone(), node1_id.clone())));
     }
 }

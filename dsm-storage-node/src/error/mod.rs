@@ -17,6 +17,14 @@ pub type Result<T> = result::Result<T, StorageNodeError>;
 /// Error type for DSM Storage Node operations
 #[derive(Debug, Error, Clone)]
 pub enum StorageNodeError {
+    /// Network client not set
+    #[error("Network client not set")]
+    NetworkClientNotSet,
+
+    /// Invalid node ID
+    #[error("Invalid node ID: {0}")]
+    InvalidNodeId(String),
+
     /// Operation not permitted or invalid operation
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -129,6 +137,11 @@ pub enum StorageNodeError {
 impl IntoResponse for StorageNodeError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
+            StorageNodeError::NetworkClientNotSet => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Network client not configured".to_string(),
+            ),
+            StorageNodeError::InvalidNodeId(msg) => (StatusCode::BAD_REQUEST, msg),
             StorageNodeError::InvalidOperation(msg) => (StatusCode::BAD_REQUEST, msg),
             StorageNodeError::Timeout => (
                 StatusCode::REQUEST_TIMEOUT,

@@ -1561,6 +1561,10 @@ impl EpidemicTasks {
     }
 }
 
+/// Simplified TaskManager to be used by the EpidemicStorageEngine
+#[derive(Default)]
+pub struct TaskManager;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1624,8 +1628,8 @@ mod tests {
         // Wait for completion
         scheduler.wait_for_task(&task_id).await.unwrap();
 
-        // Check task metadata
-        let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
+// Check task metadata
+let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
         assert_eq!(metadata.state, TaskState::Completed);
 
         // Shutdown scheduler

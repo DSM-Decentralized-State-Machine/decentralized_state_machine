@@ -5,18 +5,20 @@
 // and adaptive behavior based on network conditions.
 
 use crate::error::Result;
-use crate::storage::small_world::SmallWorldTopology;
+use crate::storage::routing::EpidemicRouter; // Added for potential use in status reports
+use crate::storage::metrics::MetricsCollector; // Added for potential use in status reports
+use crate::storage::topology::HybridTopology;
 use crate::types::{StorageNode, NodeStatus};
 
 use tokio::sync::RwLock;
-use rand::seq::SliceRandom;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::time::interval;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Failure detector algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +31,39 @@ pub enum FailureDetectorAlgorithm {
 
     /// Adaptive failure detector
     Adaptive,
+    }
+    
+    impl FailureDetectorAlgorithm {
+        /// Process ping timeouts and update node health
+        pub async fn process_ping_timeouts(
+            node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
+            ping_timeout_ms: u64,
+            failure_detector: FailureDetectorAlgorithm,
+            phi_threshold: f64,
+        ) {
+            let mut health_map = node_health.write().await;
+            let timeout_duration = Duration::from_millis(ping_timeout_ms);
+    
+            for health in health_map.values_mut() {
+                // Check for pending pings that have timed out
+                let timed_out_pings: Vec<u64> = health
+                    .pending_pings
+                    .iter()
+                    .filter(|(_, &instant)| instant.elapsed() > timeout_duration)
+                    .map(|(&seq, _)| seq)
+                    .collect();
+    
+                for seq in timed_out_pings {
+                    health.pending_pings.remove(&seq);
+                    health.record_timeout();
+                }
+    
+                // Update failure status based on the failure detector
+                if health.is_suspected_failed(failure_detector, phi_threshold) {
+                    health.status = NodeStatus::Offline;
+                }
+            }
+        }
 }
 
 /// Health check message
@@ -336,8 +371,8 @@ pub struct HealthMonitor {
     /// Health information for all known nodes
     node_health: Arc<RwLock<HashMap<String, NodeHealth>>>,
 
-    /// Small-world topology
-    topology: Arc<RwLock<SmallWorldTopology>>,
+    /// Network topology
+    topology: Arc<RwLock<HybridTopology>>, // Using HybridTopology implementation
 
     /// Health check configuration
     config: HealthCheckConfig,
@@ -349,16 +384,36 @@ pub struct HealthMonitor {
     sequence: Arc<RwLock<u64>>,
 
     /// System start time
-    #[allow(dead_code)]
     start_time: Instant,
+
+    // Added fields for status reporting
+    metrics_collector: Option<Arc<MetricsCollector>>, // Optional: Link to metrics
+    #[allow(dead_code)]
+    router: Option<Arc<EpidemicRouter>>, // Optional: Link to router for network info
 }
 
 impl HealthMonitor {
+    /// Process timeouts for pending pings and update node status
+    pub async fn process_ping_timeouts(&self) {
+        let ping_timeout_ms = self.config.ping_timeout_ms;
+        let failure_detector = self.config.failure_detector;
+        let phi_threshold = self.config.phi_threshold;
+        
+        FailureDetectorAlgorithm::process_ping_timeouts(
+            &self.node_health,
+            ping_timeout_ms,
+            failure_detector,
+            phi_threshold
+        ).await;
+    }
     /// Create a new health monitor
     pub fn new(
         node_id: String,
-        topology: Arc<RwLock<SmallWorldTopology>>,
+        topology: Arc<RwLock<HybridTopology>>, // Using HybridTopology implementation
         config: HealthCheckConfig,
+        // Optional dependencies for status reporting
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        router: Option<Arc<EpidemicRouter>>,
     ) -> (Self, Receiver<(StorageNode, HealthCheckMessage)>) {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(100);
 
@@ -370,6 +425,8 @@ impl HealthMonitor {
             message_tx,
             sequence: Arc::new(RwLock::new(0)),
             start_time: Instant::now(),
+            metrics_collector,
+            router,
         };
 
         (monitor, message_rx)
@@ -381,9 +438,23 @@ impl HealthMonitor {
         self.start_ping_task();
 
         // Start the status report task
-        // self.start_status_report_task();
+        self.start_status_report_task();
 
         Ok(())
+    }
+
+    /// Select a batch of nodes to ping
+    async fn select_nodes_to_ping(
+        node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
+        batch_size: usize,
+    ) -> Vec<StorageNode> {
+        let health_map = node_health.read().await;
+        health_map
+            .values()
+            .filter(|health| health.status == NodeStatus::Online)
+            .take(batch_size)
+            .map(|health| health.node.clone())
+            .collect()
     }
 
     /// Start the ping task
@@ -405,16 +476,44 @@ impl HealthMonitor {
 
                 // Extract all neighbors from topology before passing to the update function
                 let all_nodes = {
-                    let topology_guard = topology.read().await;
-                    topology_guard
-                        .all_neighbors()
-                        .into_iter()
-                        .collect::<Vec<_>>()
+                    let topo_guard = topology.read().await; // Await the async read lock
+                    topo_guard.all_neighbors()
                 };
-
-                // Update node health with extracted nodes
-                Self::update_node_health_from_topology_nodes(&node_id, &node_health, all_nodes)
-                    .await;
+                if all_nodes.is_empty() {
+                    debug!("No nodes to ping");
+                    continue;
+                }
+                // Update node health with the current topology
+                let mut health_map = node_health.write().await;
+                for node in all_nodes {
+                    if node.node_id.to_string() != node_id {
+                        // Convert NodeId to String for entry key
+                        let node_id_str = node.node_id.to_string();
+                        // Create a StorageNode from NodeInfo
+                        let storage_node = StorageNode {
+                            id: node_id_str.clone(),
+                            name: format!("Node {}", node_id_str),
+                            region: node.region.map_or("unknown".to_string(), |r| r.to_string()),
+                            public_key: "N/A".to_string(), // Not available in NodeInfo
+                            endpoint: format!("http://{}", node.address),
+                        };
+                        
+                        health_map.entry(node_id_str).or_insert_with(|| NodeHealth {
+                            node: storage_node,
+                            status: NodeStatus::Online,
+                            last_seen: Instant::now(),
+                            failure_value: 0.0,
+                            ping_history: VecDeque::new(),
+                            avg_ping_rtt: 0,
+                            system_load: 0.0,
+                            memory_usage: 0.0,
+                            storage_usage: 0.0,
+                            success_count: 0,
+                            failure_count: 0,
+                            pending_pings: HashMap::new(),
+                        });
+                    }
+                }
 
                 // Select a batch of nodes to ping
                 let nodes_to_ping =
@@ -424,13 +523,21 @@ impl HealthMonitor {
                     debug!("No nodes to ping");
                     continue;
                 }
-
+                // Increment sequence
                 let current_sequence = {
                     let mut seq = sequence.write().await;
                     *seq += 1;
                     *seq
                 };
-
+                
+                // Process any timed out pings
+                FailureDetectorAlgorithm::process_ping_timeouts(
+                    &node_health,
+                    config.ping_timeout_ms,
+                    config.failure_detector,
+                    config.phi_threshold,
+                )
+                .await;
                 // Send pings
                 for node in nodes_to_ping {
                     let ping_message = HealthCheckMessage::Ping {
@@ -454,7 +561,7 @@ impl HealthMonitor {
                 }
 
                 // Process timeouts
-                Self::process_ping_timeouts(
+                FailureDetectorAlgorithm::process_ping_timeouts(
                     &node_health,
                     config.ping_timeout_ms,
                     config.failure_detector,
@@ -466,88 +573,176 @@ impl HealthMonitor {
     }
 
     /// Update node health with new nodes from the topology
+    #[allow(dead_code)]
     async fn update_node_health_from_topology_nodes(
         node_id: &str,
         node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
-        all_nodes: Vec<StorageNode>,
+        all_nodes: Vec<crate::storage::topology::NodeInfo>,
     ) {
         let mut health_map = node_health.write().await;
         for node in all_nodes {
-            if !health_map.contains_key(&node.id) && node.id != node_id {
-                health_map.insert(node.id.clone(), NodeHealth::new(node));
+            // Convert NodeId to String for comparing and as key
+            let node_id_str = node.node_id.to_string();
+            
+            if !health_map.contains_key(&node_id_str) && node_id_str != node_id {
+                // Convert NodeInfo to StorageNode
+                let storage_node = StorageNode {
+                    id: node_id_str.clone(),
+                    name: format!("Node {}", node_id_str),
+                    region: node.region.map_or("unknown".to_string(), |r| r.to_string()),
+                    public_key: "N/A".to_string(), // Not available in NodeInfo
+                    endpoint: format!("http://{}", node.address),
+                };
+                
+                health_map.insert(node_id_str, NodeHealth::new(storage_node));
             }
         }
     }
 
     /// Start the status report task
     pub fn start_status_report_task(&self) {
-        info!("Starting status report task for node: {}", self.node_id);
+        let node_id = self.node_id.clone();
+        let topology = self.topology.clone();
+        let config = self.config.clone();
+        let message_tx = self.message_tx.clone();
+        let start_time = self.start_time;
+        // Clone optional dependencies if they exist
+        let metrics_collector = self.metrics_collector.clone();
+        // let _router = self.router.clone(); // Not used in this simple version
+
         tokio::spawn(async move {
-            // Implementation for sending periodic status reports
+            info!("Starting status report task for node: {}", node_id);
+            let mut report_interval = interval(Duration::from_millis(config.status_report_interval_ms));
+
+            loop {
+                report_interval.tick().await;
+
+                // Gather local status information
+                let status = NodeStatus::Online; // Basic status
+                let uptime = start_time.elapsed().as_secs();
+
+                // Get system metrics (placeholders - requires OS integration or metrics collector)
+                let system_load = metrics_collector.as_ref().map_or(0.1, |mc| mc.get_system_load()); // Example: Get from metrics
+                let memory_usage = metrics_collector.as_ref().map_or(0.2, |mc| mc.get_memory_usage()); // Example: Get from metrics
+                let storage_usage = metrics_collector.as_ref().map_or(0.3, |mc| mc.get_storage_usage()); // Example: Get from metrics
+
+
+                let report = HealthCheckMessage::StatusReport {
+                    sender: node_id.clone(),
+                    status,
+                    system_load,
+                    memory_usage,
+                    storage_usage,
+                    uptime,
+                    timestamp: Self::current_timestamp_millis(),
+                };
+
+                // Select peers to send status report to (e.g., all neighbors)
+                let peers = {
+                    let topo_guard = topology.read().await; // Await the async read lock
+                    topo_guard.all_neighbors()
+                };
+
+                if peers.is_empty() {
+                    debug!("No peers to send status report to");
+                    continue;
+                }
+
+                // Send status report to peers
+                for peer in peers {
+                    // Convert NodeInfo to StorageNode
+                    let storage_node = StorageNode {
+                        id: peer.node_id.to_string(),
+                        name: format!("Node {}", peer.node_id),
+                        region: peer.region.map_or("unknown".to_string(), |r| r.to_string()),
+                        public_key: "N/A".to_string(), // Not available in NodeInfo
+                        endpoint: format!("http://{}", peer.address),
+                    };
+                    
+                    debug!("Sending status report to peer: {}", peer.node_id);
+                    // Use try_send to avoid awaiting
+                    if let Err(e) = message_tx.try_send((storage_node.clone(), report.clone())) {
+                        error!("Failed to send status report to {}: {}", peer.node_id, e);
+                    }
+                }
+            }
         });
     }
 
-    /// Process ping timeouts
-    async fn process_ping_timeouts(
-        node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
-        ping_timeout_ms: u64,
-        failure_detector: FailureDetectorAlgorithm,
-        phi_threshold: f64,
-    ) {
-        let mut health_map = node_health.write().await;
-        for (_node_id, health) in health_map.iter_mut() {
-            // Check for timed out pings
-            let timeout_duration = Duration::from_millis(ping_timeout_ms);
-            let timed_out_sequences: Vec<u64> = health
-                .pending_pings
-                .iter()
-                .filter(|(_seq, time)| time.elapsed() > timeout_duration)
-                .map(|(seq, _time)| *seq)
-                .collect();
-
-            // Remove timed out pings and record timeouts
-            for seq in timed_out_sequences {
-                health.pending_pings.remove(&seq);
-                health.record_timeout();
+    /// Process an incoming health check message
+    pub async fn process_message(&self, sender_node: &StorageNode, message: HealthCheckMessage) -> Result<()> {
+        match message {
+            HealthCheckMessage::Ping { sender, timestamp, sequence } => {
+                debug!("Received Ping from {} (seq: {})", sender, sequence);
+                // Respond with Pong
+                let pong_message = HealthCheckMessage::Pong {
+                    sender: sender.clone(), // Original sender
+                    responder: self.node_id.clone(),
+                    request_timestamp: timestamp,
+                    response_timestamp: Self::current_timestamp_millis(),
+                    sequence,
+                };
+                // Send pong back to the original sender
+                if let Err(e) = self.message_tx.try_send((sender_node.clone(), pong_message)) {
+                     error!("Failed to send Pong to {}: {}", sender, e);
+                }
             }
+            HealthCheckMessage::Pong { sender: _original_sender, responder, request_timestamp, response_timestamp: _, sequence } => {
+                debug!("Received Pong from {} (seq: {})", responder, sequence);
+                let rtt_ms = Self::current_timestamp_millis().saturating_sub(request_timestamp);
 
-            // Update failure detection based on the algorithm
-            if failure_detector == FailureDetectorAlgorithm::PhiAccrual
-                || failure_detector == FailureDetectorAlgorithm::Adaptive
-            {
-                health.calculate_phi();
+                let mut health_map = self.node_health.write().await;
+                if let Some(health) = health_map.get_mut(&responder) {
+                    // Check if this pong corresponds to a pending ping
+                    if health.pending_pings.remove(&sequence).is_some() {
+                        health.add_ping_rtt(rtt_ms);
+                        // Reset failure value on successful pong if using PhiAccrual/Adaptive
+                        if self.config.failure_detector != FailureDetectorAlgorithm::Timeout {
+                            health.failure_value = 0.0;
+                        }
+                    } else {
+                        warn!("Received unexpected Pong from {} (seq: {})", responder, sequence);
+                    }
+                } else {
+                     warn!("Received Pong from unknown node {}", responder);
+                     // Optionally add the node if it's unknown but responded
+                     // health_map.insert(responder.clone(), NodeHealth::new(sender_node.clone()));
+                     // if let Some(health) = health_map.get_mut(&responder) {
+                     //    health.add_ping_rtt(rtt_ms);
+                     // }
+                }
             }
-
-            // Check if node is suspected failed
-            if health.is_suspected_failed(failure_detector, phi_threshold) {
-                health.status = NodeStatus::Offline;
+            HealthCheckMessage::StatusReport { sender, status, system_load, memory_usage, storage_usage, .. } => {
+                debug!("Received StatusReport from {}", sender);
+                let mut health_map = self.node_health.write().await;
+                if let Some(health) = health_map.get_mut(&sender) {
+                    health.update_from_status_report(status, system_load, memory_usage, storage_usage);
+                } else {
+                    warn!("Received StatusReport from unknown node {}", sender);
+                    // Optionally add the node
+                    // let mut new_health = NodeHealth::new(sender_node.clone());
+                    // new_health.update_from_status_report(status, system_load, memory_usage, storage_usage);
+                    // health_map.insert(sender.clone(), new_health);
+                }
             }
         }
+        Ok(())
     }
 
-    /// Select nodes to ping
-    async fn select_nodes_to_ping(
-        node_health: &Arc<RwLock<HashMap<String, NodeHealth>>>,
-        batch_size: usize,
-    ) -> Vec<StorageNode> {
-        let health_map = node_health.read().await;
+    /// Get the current status of all monitored nodes
+    pub async fn get_all_node_health(&self) -> HashMap<String, NodeHealth> {
+        self.node_health.read().await.clone()
+    }
 
-        // Filter eligible nodes (not currently being pinged)
-        let eligible_nodes: Vec<&NodeHealth> = health_map
-            .values()
-            .filter(|health| {
-                // Exclude nodes that already have pending pings
-                health.pending_pings.is_empty() &&
-                // Exclude nodes that are known to be offline
-                health.status != NodeStatus::Offline
+    /// Get suspected nodes based on the configured failure detector
+    pub async fn get_suspected_nodes(&self) -> Vec<String> {
+        let health_map = self.node_health.read().await;
+        health_map
+            .iter()
+            .filter(|(_, health)| {
+                health.is_suspected_failed(self.config.failure_detector, self.config.phi_threshold)
             })
-            .collect();
-
-        // Randomly select up to batch_size nodes
-        let mut rng = rand::thread_rng();
-        eligible_nodes
-            .choose_multiple(&mut rng, batch_size)
-            .map(|health| health.node.clone())
+            .map(|(id, _)| id.clone())
             .collect()
     }
 

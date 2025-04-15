@@ -766,9 +766,8 @@ pub struct MetricsSnapshot {
 
 /// Metrics collector for the epidemic storage system
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct MetricsCollector {
-    /// Node ID 
+    /// Node ID
     node_id: String,
 
     /// Collection start time
@@ -980,10 +979,13 @@ impl MetricsCollector {
         let mut sys = self.system_info.write();
         // Use the new API for disk information
         sys.refresh_all();
-        let total_bytes = 0;
-        let used_bytes = 0;
+        let mut total_bytes = 0;
+        let mut used_bytes = 0;
         
-       
+        for disk in sys.disks() {
+            total_bytes += disk.total_space();
+            used_bytes += disk.total_space() - disk.available_space();
+        }
         
         if total_bytes == 0 {
             return 0.0;

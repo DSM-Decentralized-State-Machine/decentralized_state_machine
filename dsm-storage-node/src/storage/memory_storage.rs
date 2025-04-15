@@ -22,9 +22,9 @@ pub struct MemoryStorageConfig {
     pub persistence_path: Option<PathBuf>,
     pub eviction_policy: EvictionPolicy,
     #[allow(dead_code)]
-    db_path: String,
+    pub(crate) db_path: String,
     #[allow(dead_code)]
-    compression: Option<String>,
+    pub(crate) compression: Option<String>,
 }
 
 #[derive(Clone, Debug)]

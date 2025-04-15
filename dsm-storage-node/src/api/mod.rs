@@ -3,6 +3,8 @@
 // This module implements the HTTP API for the storage node
 
 use crate::error::{Result, StorageNodeError};
+// Removed unused import
+
 use crate::staking::StakingService;
 use axum::{
     http::StatusCode,
@@ -34,7 +36,6 @@ pub struct AppState {
     /// Staking service
     pub staking_service: Arc<StakingService>,
 }
-
 /// API Error response
 #[derive(Debug, Serialize)]
 pub struct ApiError {
@@ -68,6 +69,8 @@ impl IntoResponse for ApiError {
 impl From<StorageNodeError> for ApiError {
     fn from(err: StorageNodeError) -> Self {
         let (code, message) = match err {
+            StorageNodeError::NetworkClientNotSet => ("NETWORK_ERROR", "Network client not set".to_string()),
+            StorageNodeError::InvalidNodeId(msg) => ("INVALID_NODE_ID", msg),
             StorageNodeError::Timeout => ("TIMEOUT", "Operation timed out".to_string()),
             StorageNodeError::Internal => ("INTERNAL_ERROR", "Internal server error".to_string()),
             StorageNodeError::Configuration => {

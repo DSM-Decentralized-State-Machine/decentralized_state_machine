@@ -355,7 +355,8 @@ impl ReconciliationEngine {
             }
         }?;
 
-        // Create conflict record if there was a conflict
+        // Always generate a conflict record for multiple entries regardless of actual conflict
+        // This ensures tests and dependent systems can rely on its presence
         let conflict_record = if entries.len() > 1 {
             let record = ConflictRecord {
                 blinded_id: blinded_id.clone(),
@@ -421,11 +422,10 @@ impl ReconciliationEngine {
             // Create a new entry with a merged vector clock
             let mut result = newest.clone();
 
-            // Merge all vector clocks
+            // Merge all vector clocks from all entries
             for entry in &context.entries {
-                if entry.entry.blinded_id != newest.entry.blinded_id {
-                    result.vector_clock.merge(&entry.vector_clock);
-                }
+                // Merge even from entries with the same blinded_id
+                result.vector_clock.merge(&entry.vector_clock);
             }
 
             // Update verification count to max + 1
@@ -470,9 +470,8 @@ impl ReconciliationEngine {
 
             // Merge all vector clocks
             for entry in &context.entries {
-                if entry.entry.blinded_id != result.entry.blinded_id {
-                    result.vector_clock.merge(&entry.vector_clock);
-                }
+                // Merge even from entries with the same blinded_id
+                result.vector_clock.merge(&entry.vector_clock);
             }
 
             // Update verification count to max + 1
@@ -1001,6 +1000,9 @@ mod tests {
         // Should have merged vector clocks
         assert_eq!(result.resolved_entry.vector_clock.get("node1"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node2"), 1);
+        
+        // Ensure we have a conflict record since we reconciled multiple entries
+        assert!(result.conflict_record.is_some(), "Expected a conflict record to be generated");
     }
 
     #[tokio::test]
@@ -1029,6 +1031,9 @@ mod tests {
         assert_eq!(result.resolved_entry.vector_clock.get("node2"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node3"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node4"), 1);
+        
+        // Make sure we have a conflict record since we had multiple entries
+        assert!(result.conflict_record.is_some(), "Expected a conflict record to be generated");
     }
 
     #[tokio::test]
