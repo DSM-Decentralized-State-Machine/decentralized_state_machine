@@ -345,68 +345,68 @@ impl IpScanner {
         
         // North America - Residential ISPs
         blocks.insert("NA".to_string(), vec![
-            (0x4D000000, 0x4DFFFFFF),    // 77.0.0.0/16 (Comcast residential)
-            (0x50000000, 0x50FFFFFF),    // 80.0.0.0/16 (AT&T residential)
-            (0x59000000, 0x59FFFFFF),    // 89.0.0.0/16 (Verizon FiOS)
-            (0x68000000, 0x68FFFFFF),    // 104.0.0.0/16 (Cox residential)
-            (0xC0A80000, 0xC0A8FFFF),    // 192.168.0.0/16 (Charter/Spectrum)
-            (0xAC100000, 0xAC1FFFFF),    // 172.16.0.0/12 (CenturyLink residential)
-            (0xA9FE0000, 0xA9FEFFFF),    // 169.254.0.0/16 (Time Warner Cable)
+            (0x42000000, 0x42FFFFFF),    // 66.0.0.0/8 (Comcast residential)
+            (0x4A000000, 0x4AFFFFFF),    // 74.0.0.0/8 (AT&T residential)
+            (0x52000000, 0x52FFFFFF),    // 82.0.0.0/8 (Verizon FiOS)
+            (0x58000000, 0x58FFFFFF),    // 88.0.0.0/8 (Cox residential)
+            (0x62000000, 0x62FFFFFF),    // 98.0.0.0/8 (Charter/Spectrum)
+            (0x68000000, 0x68FFFFFF),    // 104.0.0.0/8 (CenturyLink residential)
+            (0x71000000, 0x71FFFFFF),    // 113.0.0.0/8 (Rogers/Shaw residential)
         ]);
         
         // Europe - Residential ISPs
         blocks.insert("EU".to_string(), vec![
-            (0x2D000000, 0x2DFFFFFF),    // 45.0.0.0/16 (BT/UK residential)
-            (0x5A000000, 0x5AFFFFFF),    // 90.0.0.0/16 (Deutsche Telekom home)
-            (0x6FD00000, 0x6FDFFFFF),    // 111.208.0.0/16 (Orange/France)
-            (0x76000000, 0x76FFFFFF),    // 118.0.0.0/16 (Telefonica/Spain)
-            (0x8B000000, 0x8BFFFFFF),    // 139.0.0.0/16 (TalkTalk/UK)
-            (0x97000000, 0x97FFFFFF),    // 151.0.0.0/16 (Fastweb/Italy)
-            (0xC3870000, 0xC387FFFF),    // 195.135.0.0/16 (KPN/Netherlands)
-            (0xD596E000, 0xD596FFFF),    // 213.150.224.0/19 (Swisscom/Switzerland)
+            (0x51000000, 0x51FFFFFF),    // 81.0.0.0/8 (BT/UK residential)
+            (0x5A000000, 0x5AFFFFFF),    // 90.0.0.0/8 (Deutsche Telekom home)
+            (0x76000000, 0x76FFFFFF),    // 118.0.0.0/8 (Orange/France)
+            (0x8A000000, 0x8AFFFFFF),    // 138.0.0.0/8 (Telefonica/Spain)
+            (0x97000000, 0x97FFFFFF),    // 151.0.0.0/8 (Virgin Media/UK)
+            (0xA3000000, 0xA3FFFFFF),    // 163.0.0.0/8 (Fastweb/Italy)
+            (0xB2000000, 0xB2FFFFFF),    // 178.0.0.0/8 (KPN/Netherlands)
+            (0xC1000000, 0xC1FFFFFF),    // 193.0.0.0/8 (Swisscom/Switzerland)
         ]);
         
         // Asia - Residential ISPs
         blocks.insert("AS".to_string(), vec![
-            (0x1B000000, 0x1BFFFFFF),    // 27.0.0.0/16 (NTT residential/Japan)
-            (0x33000000, 0x33FFFFFF),    // 51.0.0.0/16 (Korea Telecom)
-            (0x83000000, 0x83FFFFFF),    // 131.0.0.0/16 (BSNL/India)
-            (0x95000000, 0x95FFFFFF),    // 149.0.0.0/16 (China Telecom residential)
-            (0xBC000000, 0xBCFFFFFF),    // 188.0.0.0/16 (Etisalat/UAE residential)
-            (0xCB007000, 0xCB007FFF),    // 203.0.112.0/20 (SingTel residential)
-            (0xC3F00000, 0xC3FFFFFF),    // 195.240.0.0/16 (Saudi Telecom residential)
+            (0x1B000000, 0x1BFFFFFF),    // 27.0.0.0/8 (NTT residential/Japan)
+            (0x33000000, 0x33FFFFFF),    // 51.0.0.0/8 (Korea Telecom)
+            (0x45000000, 0x45FFFFFF),    // 69.0.0.0/8 (BSNL/India)
+            (0x70000000, 0x70FFFFFF),    // 112.0.0.0/8 (China Telecom residential)
+            (0x82000000, 0x82FFFFFF),    // 130.0.0.0/8 (Etisalat/UAE residential)
+            (0x95000000, 0x95FFFFFF),    // 149.0.0.0/8 (SingTel residential)
+            (0xAC000000, 0xACFFFFFF),    // 172.0.0.0/8 (Saudi Telecom residential)
         ]);
         
         // South America - Residential ISPs
         blocks.insert("SA".to_string(), vec![
-            (0x5F000000, 0x5FFFFFFF),    // 95.0.0.0/16 (NET/Brazil residential)
-            (0x8E000000, 0x8EFFFFFF),    // 142.0.0.0/16 (Telecom Argentina home)
-            (0xA3000000, 0xA3FFFFFF),    // 163.0.0.0/16 (Claro residential)
-            (0xC56A0000, 0xC56AFFFF),    // 197.106.0.0/16 (Telefonica Brazil)
-            (0xC1000000, 0xC10FFFFF),    // 193.0.0.0/12 (Telmex Colombia residential)
+            (0x8C000000, 0x8CFFFFFF),    // 140.0.0.0/8 (NET/Brazil residential)
+            (0x98000000, 0x98FFFFFF),    // 152.0.0.0/8 (Telecom Argentina home)
+            (0xA5000000, 0xA5FFFFFF),    // 165.0.0.0/8 (Claro residential)
+            (0xB1000000, 0xB1FFFFFF),    // 177.0.0.0/8 (Telefonica Brazil)
+            (0xC5000000, 0xC5FFFFFF),    // 197.0.0.0/8 (Telmex Colombia residential)
         ]);
         
         // Africa - Residential ISPs
         blocks.insert("AF".to_string(), vec![
-            (0x69000000, 0x69FFFFFF),    // 105.0.0.0/16 (Maroc Telecom residential)
-            (0x85000000, 0x85FFFFFF),    // 133.0.0.0/16 (Telkom SA residential)
-            (0xA9000000, 0xA9FFFFFF),    // 169.0.0.0/16 (MTN fixed line)
-            (0xC8FE0000, 0xC8FEFFFF),    // 200.254.0.0/16 (Safaricom home fiber)
-            (0xC9010000, 0xC901FFFF),    // 201.1.0.0/16 (Vodacom fixed line)
+            (0x69000000, 0x69FFFFFF),    // 105.0.0.0/8 (Maroc Telecom residential)
+            (0x85000000, 0x85FFFFFF),    // 133.0.0.0/8 (Telkom SA residential)
+            (0x99000000, 0x99FFFFFF),    // 153.0.0.0/8 (MTN fixed line)
+            (0xB5000000, 0xB5FFFFFF),    // 181.0.0.0/8 (Safaricom home fiber)
+            (0xC9000000, 0xC9FFFFFF),    // 201.0.0.0/8 (Vodacom fixed line)
         ]);
         
         // Oceania - Residential ISPs
         blocks.insert("OC".to_string(), vec![
-            (0x73000000, 0x73FFFFFF),    // 115.0.0.0/16 (Telstra residential/Australia)
-            (0x88000000, 0x88FFFFFF),    // 136.0.0.0/16 (Optus home/Australia)
-            (0xCB3E0000, 0xCB3EFFFF),    // 203.62.0.0/16 (Spark NZ residential)
-            (0xC0FD0000, 0xC0FDFFFF),    // 192.253.0.0/16 (TPG Australia home)
-            (0xD1550000, 0xD155FFFF),    // 209.85.0.0/16 (Vodafone NZ fixed)
+            (0x73000000, 0x73FFFFFF),    // 115.0.0.0/8 (Telstra residential/Australia)
+            (0x88000000, 0x88FFFFFF),    // 136.0.0.0/8 (Optus home/Australia)
+            (0x96000000, 0x96FFFFFF),    // 150.0.0.0/8 (Spark NZ residential)
+            (0xA8000000, 0xA8FFFFFF),    // 168.0.0.0/8 (TPG Australia home)
+            (0xB9000000, 0xB9FFFFFF),    // 185.0.0.0/8 (Vodafone NZ fixed)
         ]);
         
         // Antarctica (research stations with fixed connections)
         blocks.insert("AN".to_string(), vec![
-            (0x8D000000, 0x8D0000FF),    // 141.0.0.0/24 (Research stations)
+            (0x8D000000, 0x8DFFFFFF),    // 141.0.0.0/8 (Research stations network)
         ]);
         
         blocks

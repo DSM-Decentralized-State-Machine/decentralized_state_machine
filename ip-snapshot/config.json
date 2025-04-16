@@ -1,0 +1,26 @@
+{
+  "data_dir": "./data",
+  "geoip_path": "./GeoLite2-City.mmdb",
+  "max_ips": 2000000,
+  "detect_proxies": true,
+  "rate_limit": 12000,
+  "proxy_detection_providers": [],
+  "export_format": "json",
+  "collect_network_metrics": true,
+  "encrypt_data": false,
+  "max_duration_seconds": 0,
+  "snapshot_interval_seconds": 3600,
+  "auto_start_collection": false,
+  "network_timeout_seconds": 10,
+  "network_retry_count": 3,
+  "enable_global_limits": true,
+  "max_db_size_bytes": 10737418240,
+  "logging": {
+    "level": "info",
+    "console": true,
+    "file": true,
+    "file_path": "./logs/ip-snapshot.log",
+    "max_file_size": 104857600,
+    "max_files": 10
+  }
+}
