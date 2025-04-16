@@ -58,14 +58,18 @@ node_modules/
 vendor/
 
 # Keys and credentials
+# Block all key files
 keys/*.key
+keys/*.pub
+keys/node.*
+keys/node*
+keys/private*
 keys/*.pem
 keys/*.p12
 keys/*.pfx
 keys/*.keystore
 keys/*.jks
-keys/node.key
-keys/private*.key
+# Additional patterns
 **/*.password
 **/*.secret
 **/*.credentials
