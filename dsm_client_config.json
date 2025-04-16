@@ -1,0 +1,15 @@
+{
+  "storage": {
+    "url": "http://127.0.0.1:8080",
+    "cache_dir": "./data/cache",
+    "local_storage_path": "./data"
+  },
+  "network": {
+    "discovery_nodes": ["http://127.0.0.1:8080"],
+    "connection_timeout": 30
+  },
+  "security": {
+    "identity_file": "./data/identity.key",
+    "create_identity_if_missing": true
+  }
+}
