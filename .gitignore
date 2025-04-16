@@ -56,3 +56,20 @@ docs/_templates/
 # Dependencies
 node_modules/
 vendor/
+
+# Keys and credentials
+keys/*.key
+keys/*.pem
+keys/*.p12
+keys/*.pfx
+keys/*.keystore
+keys/*.jks
+keys/node.key
+keys/private*.key
+**/*.password
+**/*.secret
+**/*.credentials
+**/credentials.json
+**/secrets.json
+**/*_key
+**/*_token
