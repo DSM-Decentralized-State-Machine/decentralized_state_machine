@@ -714,10 +714,10 @@ impl Default for MetricsCollectorConfig {
     fn default() -> Self {
         Self {
             collection_interval_ms: 5000, // Collect every 5 seconds
-            max_key_metrics: 100,       // Track top 100 keys
-            max_node_metrics: 100,      // Track top 100 nodes
-            snapshot_interval_ms: 60000, // Snapshot every minute
-            max_snapshots: 60,          // Retain 1 hour of snapshots
+            max_key_metrics: 100,         // Track top 100 keys
+            max_node_metrics: 100,        // Track top 100 nodes
+            snapshot_interval_ms: 60000,  // Snapshot every minute
+            max_snapshots: 60,            // Retain 1 hour of snapshots
             enable_detailed_metrics: true,
             operation_history_limit: 1000, // Default limit for operation history
         }
@@ -768,7 +768,7 @@ pub struct MetricsSnapshot {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct MetricsCollector {
-    /// Node ID 
+    /// Node ID
     node_id: String,
 
     /// Collection start time
@@ -828,7 +828,7 @@ pub struct MetricsCollector {
 
     // --- System Info ---
     system_info: Arc<RwLock<System>>,
-    
+
     // --- Custom Metrics ---
     custom_metrics: Arc<RwLock<HashMap<String, f64>>>,
 }
@@ -846,26 +846,47 @@ impl MetricsCollector {
             node_metrics: Arc::new(DashMap::new()),
             key_metrics: Arc::new(DashMap::new()),
             network_metrics: Arc::new(RwLock::new(NetworkMetrics {
-                total_nodes: 0, connected_nodes: 0, disconnected_nodes: 0,
-                diameter_estimate: 0, avg_coordination_number: 0.0, connectivity: 0.0,
-                total_messages_sent: 0, total_messages_received: 0,
-                total_bytes_sent: 0, total_bytes_received: 0,
-                message_types_received: HashMap::new(), message_types_sent: HashMap::new(),
+                total_nodes: 0,
+                connected_nodes: 0,
+                disconnected_nodes: 0,
+                diameter_estimate: 0,
+                avg_coordination_number: 0.0,
+                connectivity: 0.0,
+                total_messages_sent: 0,
+                total_messages_received: 0,
+                total_bytes_sent: 0,
+                total_bytes_received: 0,
+                message_types_received: HashMap::new(),
+                message_types_sent: HashMap::new(),
             })),
             storage_metrics: Arc::new(RwLock::new(StorageMetrics {
-                total_entries: 0, total_bytes: 0, avg_entry_size: 0, replicated_entries: 0,
-                avg_replication_factor: 0.0, max_replication_factor: 0, min_replication_factor: 0,
-                conflict_rate: 0.0, read_repair_rate: 0.0, space_amplification: 0.0,
+                total_entries: 0,
+                total_bytes: 0,
+                avg_entry_size: 0,
+                replicated_entries: 0,
+                avg_replication_factor: 0.0,
+                max_replication_factor: 0,
+                min_replication_factor: 0,
+                conflict_rate: 0.0,
+                read_repair_rate: 0.0,
+                space_amplification: 0.0,
             })),
             epidemic_metrics: Arc::new(RwLock::new(EpidemicMetrics {
-                 gossip_rounds: 0, anti_entropy_rounds: 0, avg_gossip_fanout: 0.0,
-                 avg_entries_per_gossip: 0.0, avg_anti_entropy_time_ms: 0,
-                 avg_convergence_time_ms: 0, total_updates_propagated: 0,
-                 total_conflicts_resolved: 0, failed_propagations: 0,
+                gossip_rounds: 0,
+                anti_entropy_rounds: 0,
+                avg_gossip_fanout: 0.0,
+                avg_entries_per_gossip: 0.0,
+                avg_anti_entropy_time_ms: 0,
+                avg_convergence_time_ms: 0,
+                total_updates_propagated: 0,
+                total_conflicts_resolved: 0,
+                failed_propagations: 0,
             })),
             region_metrics: Arc::new(DashMap::new()),
             snapshots: Arc::new(RwLock::new(VecDeque::with_capacity(config.max_snapshots))),
-            operation_history: Arc::new(Mutex::new(VecDeque::with_capacity(config.operation_history_limit))),
+            operation_history: Arc::new(Mutex::new(VecDeque::with_capacity(
+                config.operation_history_limit,
+            ))),
             total_messages_sent: Arc::new(AtomicU64::new(0)),
             total_messages_received: Arc::new(AtomicU64::new(0)),
             total_bytes_sent: Arc::new(AtomicU64::new(0)),
@@ -915,13 +936,15 @@ impl MetricsCollector {
             if let Some(mut metrics) = self.operation_metrics.get_mut(entry.key()) {
                 metrics.merge(entry.value());
             } else {
-                self.operation_metrics.insert(*entry.key(), entry.value().clone());
+                self.operation_metrics
+                    .insert(*entry.key(), entry.value().clone());
             }
         }
-        
+
         // Merge node metrics
         for entry in other.node_metrics.iter() {
-            self.node_metrics.insert(entry.key().clone(), entry.value().clone());
+            self.node_metrics
+                .insert(entry.key().clone(), entry.value().clone());
         }
 
         // Merge network metrics
@@ -934,8 +957,14 @@ impl MetricsCollector {
         }
 
         // Merge atomic counters
-        self.total_messages_sent.fetch_add(other.total_messages_sent.load(Ordering::Relaxed), Ordering::Relaxed);
-        self.total_messages_received.fetch_add(other.total_messages_received.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.total_messages_sent.fetch_add(
+            other.total_messages_sent.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.total_messages_received.fetch_add(
+            other.total_messages_received.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
     }
 
     /// Get the latest metrics snapshot
@@ -982,26 +1011,28 @@ impl MetricsCollector {
         sys.refresh_all();
         let total_bytes = 0;
         let used_bytes = 0;
-        
-       
-        
+
         if total_bytes == 0 {
             return 0.0;
         }
-        
+
         (used_bytes as f64 / total_bytes as f64) as f32
     }
-    
+
     /// Record when a message has been propagated
     pub fn record_message_propagated(&self) {
-        self.total_messages_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.total_messages_sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    
+
     /// Record the current routing table size
     pub fn record_routing_table_size(&self, size: u64) {
-        let _ = self.custom_metrics.write().insert("routing_table_size".to_string(), size as f64);
+        let _ = self
+            .custom_metrics
+            .write()
+            .insert("routing_table_size".to_string(), size as f64);
     }
-    
+
     /// Record a custom metric
     pub fn record_custom_metric(&self, name: &str, value: f64) {
         let _ = self.custom_metrics.write().insert(name.to_string(), value);
@@ -1013,9 +1044,11 @@ impl MetricsCollector {
         {
             let mut network_metrics = self.network_metrics.write();
             network_metrics.total_messages_sent = self.total_messages_sent.load(Ordering::Relaxed);
-            network_metrics.total_messages_received = self.total_messages_received.load(Ordering::Relaxed);
+            network_metrics.total_messages_received =
+                self.total_messages_received.load(Ordering::Relaxed);
             network_metrics.total_bytes_sent = self.total_bytes_sent.load(Ordering::Relaxed);
-            network_metrics.total_bytes_received = self.total_bytes_received.load(Ordering::Relaxed);
+            network_metrics.total_bytes_received =
+                self.total_bytes_received.load(Ordering::Relaxed);
             // TODO: Update other network metrics like node counts, connectivity etc.
         }
 
@@ -1023,7 +1056,8 @@ impl MetricsCollector {
             let mut epidemic_metrics = self.epidemic_metrics.write();
             epidemic_metrics.gossip_rounds = self.gossip_rounds.load(Ordering::Relaxed);
             epidemic_metrics.anti_entropy_rounds = self.anti_entropy_rounds.load(Ordering::Relaxed);
-            epidemic_metrics.total_conflicts_resolved = self.total_conflicts_resolved.load(Ordering::Relaxed);
+            epidemic_metrics.total_conflicts_resolved =
+                self.total_conflicts_resolved.load(Ordering::Relaxed);
             // TODO: Calculate averages like avg_gossip_fanout
         }
 
@@ -1034,26 +1068,27 @@ impl MetricsCollector {
 
             // Example: Calculate read repair rate
             if storage_metrics.total_entries > 0 {
-            storage_metrics.read_repair_rate =
-                read_repairs as f64 / storage_metrics.total_entries as f64;
+                storage_metrics.read_repair_rate =
+                    read_repairs as f64 / storage_metrics.total_entries as f64;
             } else {
-            storage_metrics.read_repair_rate = 0.0;
+                storage_metrics.read_repair_rate = 0.0;
             }
 
             // Example: Update space amplification (assuming replicated_entries > 0)
             if storage_metrics.replicated_entries > 0 {
-            storage_metrics.space_amplification = storage_metrics.total_bytes as f64
-                / (storage_metrics.replicated_entries as f64 * storage_metrics.avg_entry_size as f64);
+                storage_metrics.space_amplification = storage_metrics.total_bytes as f64
+                    / (storage_metrics.replicated_entries as f64
+                        * storage_metrics.avg_entry_size as f64);
             } else {
-            storage_metrics.space_amplification = 0.0;
+                storage_metrics.space_amplification = 0.0;
             }
 
             // Example: Update average entry size
             if storage_metrics.total_entries > 0 {
-            storage_metrics.avg_entry_size =
-                storage_metrics.total_bytes / storage_metrics.total_entries;
+                storage_metrics.avg_entry_size =
+                    storage_metrics.total_bytes / storage_metrics.total_entries;
             } else {
-            storage_metrics.avg_entry_size = 0;
+                storage_metrics.avg_entry_size = 0;
             }
 
             // Example: Update conflict rate (assuming conflicts are tracked elsewhere)
@@ -1062,7 +1097,8 @@ impl MetricsCollector {
         }
 
         // Collect operation metrics
-        let operation_metrics_map: HashMap<_, _> = self.operation_metrics
+        let operation_metrics_map: HashMap<_, _> = self
+            .operation_metrics
             .iter()
             .map(|entry| (*entry.key(), entry.value().clone()))
             .collect();
@@ -1081,8 +1117,8 @@ impl MetricsCollector {
             storage_metrics,
             epidemic_metrics,
             region_metrics: HashMap::new(), // Placeholder
-            top_node_metrics: Vec::new(), // Placeholder
-            top_key_metrics: Vec::new(), // Placeholder
+            top_node_metrics: Vec::new(),   // Placeholder
+            top_key_metrics: Vec::new(),    // Placeholder
         };
 
         // Optionally store the snapshot
@@ -1149,7 +1185,10 @@ impl MetricsCollector {
             .entry(timer.op_type)
             .or_insert_with(|| OperationMetrics::new(timer.op_type))
             .record_operation(
-                timer.outcome.clone().unwrap_or(OperationOutcome::Failure("Outcome not set".to_string())),
+                timer
+                    .outcome
+                    .clone()
+                    .unwrap_or(OperationOutcome::Failure("Outcome not set".to_string())),
                 latency_us,
                 timer.data_size,
             );
@@ -1170,7 +1209,9 @@ impl MetricsCollector {
             start_time: SystemTime::now() - duration,
             duration,
             data_size: timer.data_size,
-            outcome: timer.outcome.unwrap_or(OperationOutcome::Failure("Outcome not set".to_string())),
+            outcome: timer
+                .outcome
+                .unwrap_or(OperationOutcome::Failure("Outcome not set".to_string())),
         };
         self.record_operation(context).await;
     }
@@ -1220,28 +1261,28 @@ pub fn collect_system_metrics() -> Result<SystemMetrics> {
     sys.refresh_all();
 
     // Using placeholder values since we're not using the specific sysinfo traits
-    
+
     // CPU
     let cpu_usage = 0.0; // Placeholder
-    
+
     // Memory
     let total_memory_bytes = 0;
     let used_memory_bytes = 0;
     let memory_usage = 0.0;
-    
-    // Disk 
+
+    // Disk
     let disk_usage = 0.0;
     let total_disk_bytes = 0;
     let used_disk_bytes = 0;
-    
+
     // Network
     let network_bytes_in = 0;
     let network_bytes_out = 0;
-    
+
     // Process
     let process_cpu_usage = 0.0;
     let process_memory_bytes = 0;
-    
+
     let uptime_seconds = 0;
 
     Ok(SystemMetrics {

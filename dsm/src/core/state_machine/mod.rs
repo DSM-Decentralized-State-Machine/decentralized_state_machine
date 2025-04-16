@@ -13,6 +13,7 @@ pub mod batch;
 pub mod batch_proof;
 pub mod bilateral;
 pub mod checkpoint;
+pub mod genesis;
 pub mod hashchain;
 pub mod random_walk;
 pub mod relationship;
@@ -23,8 +24,7 @@ pub mod transition;
 pub mod transition_fix;
 pub mod transition_fix_test;
 pub mod utils;
-pub mod validation;
-pub mod genesis; // Centralized utility module
+pub mod validation; // Centralized utility module
 
 pub use crate::core::state_machine::checkpoint::Checkpoint;
 use crate::core::state_machine::relationship::validate_relationship_state_transition;

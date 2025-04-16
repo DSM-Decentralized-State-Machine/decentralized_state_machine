@@ -24,85 +24,81 @@ use crate::ip_collector::{IpCollector, CollectorCommand};
 use crate::types::ApiResponse;
 
 mod handlers;
+mod metrics;
 mod middleware;
 mod rate_limit;
-mod metrics;
 
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
     /// IP collector command sender
     collector_tx: mpsc::Sender<CollectorCommand>,
-    
+
     /// Snapshot store
     store: Arc<SnapshotStore>,
-    
+
     /// Configuration
-    config: SnapshotConfig,
+    #[allow(dead_code)]
+    pub(crate) config: SnapshotConfig,
 }
 
 /// Start the API server
 pub async fn start_api_server(
     listen_addr: String,
     store: SnapshotStore,
-    config: SnapshotConfig
+    config: SnapshotConfig,
 ) -> Result<()> {
     // Parse address
-    let addr = SocketAddr::from_str(&listen_addr).map_err(|e| {
-        SnapshotError::Api(format!("Invalid listen address: {}", e))
-    })?;
-    
+    let addr = SocketAddr::from_str(&listen_addr)
+        .map_err(|e| SnapshotError::Api(format!("Invalid listen address: {}", e)))?;
+
     // Initialize IP collector
     let collector = IpCollector::new(config.clone(), Arc::new(store.clone())).await?;
     let collector_tx = collector.command_sender();
-    
+
     // Spawn collector service in a way that ensures thread safety
     // Use a properly scoped block to ensure any non-Send types don't leak into the spawned task
     {
         let safe_collector = collector;
-        tokio::task::spawn_local(async move { 
+        tokio::task::spawn_local(async move {
             safe_collector.run().await;
         });
     }
-    
+
     // Create shared state
     let state = AppState {
         collector_tx,
         store: Arc::new(store),
         config,
     };
-    
+
     // Configure CORS
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
-    
+
     // Build router
     let app = Router::new()
         // Public endpoints
         .route("/health", get(handlers::health_check))
         .route("/stats", get(handlers::get_stats))
         .route("/", get(handlers::index))
-        
         // IP collection endpoints (passive - extracts real client IPs transparently)
         .route("/api/ping", get(handlers::passive_collect))
         .route("/api/beacon", get(handlers::passive_collect))
         .route("/api/status", get(handlers::passive_collect))
         .route("/api/metrics", get(handlers::passive_collect))
-        
         // Admin endpoints (protected by token)
         .route("/admin/start", post(handlers::start_collection))
         .route("/admin/stop", post(handlers::stop_collection))
         .route("/admin/snapshot", post(handlers::create_snapshot))
         .route("/admin/snapshots", get(handlers::list_snapshots))
         .route("/admin/clear", post(handlers::clear_data))
-        
         // Export endpoints (protected by token)
         .route("/admin/export/json", get(handlers::export_json))
         .route("/admin/export/csv", get(handlers::export_csv))
         .route("/admin/export/hash", get(handlers::export_hash))
-        
         // Middleware
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -110,7 +106,7 @@ pub async fn start_api_server(
         // .layer(CompressionLayer::new())
         .layer(middleware::extract_real_ip_layer())
         .with_state(state);
-    
+
     // Start server
     info!("Starting IP collection server on {}", addr);
     let make_service = app.into_make_service_with_connect_info::<SocketAddr>();
@@ -118,7 +114,7 @@ pub async fn start_api_server(
         .serve(make_service)
         .await
         .map_err(|e| SnapshotError::Api(format!("Server error: {}", e)))?;
-    
+
     Ok(())
 }
 
@@ -134,18 +130,18 @@ impl IntoResponse for SnapshotError {
             SnapshotError::Database(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, &format!("{}", self)),
         };
-        
+
         // Construct error response
         let response = ApiResponse::<()>::error(error_message.to_string());
         let body = Json(response);
-        
+
         // Log error details for non-client errors
         if status.as_u16() >= 500 {
             error!("Server error: {}", self);
         } else {
             debug!("Client error: {}", self);
         }
-        
+
         (status, body).into_response()
     }
 }

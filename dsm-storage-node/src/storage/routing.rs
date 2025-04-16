@@ -25,7 +25,9 @@ impl From<&crate::storage::topology::NodeInfo> for StorageNode {
         StorageNode {
             id: node_info.node_id.to_string(),
             name: format!("Node {}", node_info.node_id),
-            region: node_info.region.map_or_else(|| "unknown".to_string(), |r| r.to_string()),
+            region: node_info
+                .region
+                .map_or_else(|| "unknown".to_string(), |r| r.to_string()),
             public_key: "key-placeholder".to_string(), // Placeholder
             endpoint: node_info.address.to_string(),
         }
@@ -331,7 +333,7 @@ impl RoutingTable {
             topology
                 .find_closest_nodes(&node_id, 5)
                 .into_iter()
-                .map(StorageNode::from)
+                .map(StorageNode::from),
         );
 
         potential_neighbors
@@ -423,11 +425,7 @@ impl RoutingTable {
     }
 
     /// Greedy routing strategy (always choose the closest node)
-    fn greedy_routing(
-        &self,
-        target: &NodeId,
-        topology: &HybridTopology,
-    ) -> Option<StorageNode> {
+    fn greedy_routing(&self, target: &NodeId, topology: &HybridTopology) -> Option<StorageNode> {
         let closest = topology.find_closest_nodes(target, 1);
 
         if !closest.is_empty() {
@@ -438,11 +436,7 @@ impl RoutingTable {
     }
 
     /// Perimeter routing strategy (route around obstacles)
-    fn perimeter_routing(
-        &self,
-        target: &NodeId,
-        topology: &HybridTopology,
-    ) -> Option<StorageNode> {
+    fn perimeter_routing(&self, target: &NodeId, topology: &HybridTopology) -> Option<StorageNode> {
         let mut closest = topology.find_closest_nodes(target, 5);
 
         // Filter out failed routes
@@ -477,18 +471,16 @@ impl RoutingTable {
             // Simple probabilistic approach - choose randomly from top 3
             use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
-            closest.choose(&mut rng).map(|n| StorageNode::from(n.clone()))
+            closest
+                .choose(&mut rng)
+                .map(|n| StorageNode::from(n.clone()))
         } else {
             None
         }
     }
 
     /// Hybrid routing strategy (combine strategies)
-    fn hybrid_routing(
-        &self,
-        target: &NodeId,
-        topology: &HybridTopology,
-    ) -> Option<StorageNode> {
+    fn hybrid_routing(&self, target: &NodeId, topology: &HybridTopology) -> Option<StorageNode> {
         // Try greedy first
         let greedy_result = self.greedy_routing(target, topology);
 
@@ -503,20 +495,21 @@ impl RoutingTable {
                 return self.perimeter_routing(target, topology);
             }
         }
-    greedy_result
+        greedy_result
     }
 
     /// Find responsible nodes for a hash key
     pub fn find_responsible_nodes(&self, key: &[u8], count: usize) -> Vec<StorageNode> {
         let key_hash = calculate_key_hash(std::str::from_utf8(key).unwrap_or_default());
-        let target_id = NodeId::from_string(&key_hash.to_string()).unwrap_or_else(|_| self.self_id.clone());
+        let target_id =
+            NodeId::from_string(&key_hash.to_string()).unwrap_or_else(|_| self.self_id.clone());
         let topology_guard = self.topology.read();
-        topology_guard.find_closest_nodes(&target_id, count)
+        topology_guard
+            .find_closest_nodes(&target_id, count)
             .into_iter()
             .map(StorageNode::from)
             .collect()
     }
-
 
     /// Find responsible nodes for a blinded ID
     pub fn find_responsible_nodes_for_id(
@@ -670,10 +663,14 @@ mod tests {
     fn test_routing_table() {
         // Create a simple routing table for testing
         // Using a valid 64-character hex string for NodeId (32 bytes)
-        let self_id = NodeId::from_string("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
-        let topology = Arc::new(parking_lot::RwLock::new(
-            HybridTopology::new(self_id.clone(), HybridTopologyConfig::default(), None)
-        ));
+        let self_id =
+            NodeId::from_string("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let topology = Arc::new(parking_lot::RwLock::new(HybridTopology::new(
+            self_id.clone(),
+            HybridTopologyConfig::default(),
+            None,
+        )));
         let table = RoutingTable::new(self_id.clone(), topology.clone(), RoutingStrategy::Greedy);
 
         // Create test nodes
@@ -698,18 +695,24 @@ mod tests {
             let mut topo = topology.write();
             let node1_id = NodeId::from_string(&node1.node_id).unwrap();
             let node2_id = NodeId::from_string(&node2.node_id).unwrap();
-            
+
             // Parse string addresses to SocketAddr
-            let addr1 = node1.endpoint.parse::<SocketAddr>().unwrap_or_else(|_| "127.0.0.1:8000".parse().unwrap());
-            let addr2 = node2.endpoint.parse::<SocketAddr>().unwrap_or_else(|_| "127.0.0.1:8001".parse().unwrap());
-            
+            let addr1 = node1
+                .endpoint
+                .parse::<SocketAddr>()
+                .unwrap_or_else(|_| "127.0.0.1:8000".parse().unwrap());
+            let addr2 = node2
+                .endpoint
+                .parse::<SocketAddr>()
+                .unwrap_or_else(|_| "127.0.0.1:8001".parse().unwrap());
+
             // Parse region strings to u8
             let region1 = Some(1u8); // Simplified mapping
             let region2 = Some(2u8); // Simplified mapping
-            
+
             // Call add_node with the required individual parameters
             topo.add_node(node1_id.clone(), addr1, region1, 80).unwrap();
-            
+
             // Call add_node with the required individual parameters
             topo.add_node(node2_id.clone(), addr2, region2, 75).unwrap();
         }
@@ -735,9 +738,13 @@ mod tests {
 
         // Test mark_route_failed and mark_route_success
         table.mark_route_failed(&self_id, &node1_id);
-        assert!(table.failed_routes.contains_key(&(self_id.clone(), node1_id.clone())));
+        assert!(table
+            .failed_routes
+            .contains_key(&(self_id.clone(), node1_id.clone())));
 
         table.mark_route_success(&node1_id);
-        assert!(!table.failed_routes.contains_key(&(self_id.clone(), node1_id.clone())));
+        assert!(!table
+            .failed_routes
+            .contains_key(&(self_id.clone(), node1_id.clone())));
     }
 }

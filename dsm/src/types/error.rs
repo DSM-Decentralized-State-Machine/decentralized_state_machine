@@ -718,7 +718,12 @@ impl Display for DsmError {
                 }
                 Ok(())
             }
-            DsmError::Network { context, source, entity: _, details: _ } => {
+            DsmError::Network {
+                context,
+                source,
+                entity: _,
+                details: _,
+            } => {
                 write!(f, "Network error: {}", context)?;
                 if let Some(s) = source {
                     write!(f, " - caused by: {}", s)?;
@@ -726,7 +731,12 @@ impl Display for DsmError {
                 Ok(())
             }
             DsmError::StateMachine(msg) => write!(f, "State machine error: {}", msg),
-            DsmError::NotFound { entity, details, context, source: _ } => {
+            DsmError::NotFound {
+                entity,
+                details,
+                context,
+                source: _,
+            } => {
                 write!(f, "{} not found", entity)?;
                 if let Some(d) = details {
                     write!(f, ": {}", d)?;
@@ -749,7 +759,12 @@ impl Display for DsmError {
                 Ok(())
             }
             DsmError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
-            DsmError::Serialization { context, source, entity: _, details: _ } => {
+            DsmError::Serialization {
+                context,
+                source,
+                entity: _,
+                details: _,
+            } => {
                 write!(f, "Serialization error: {}", context)?;
                 if let Some(s) = source {
                     write!(f, " - caused by: {}", s)?;

@@ -18,7 +18,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // Add this import to fix the unresolved module error
 use tracing as log;
 
-
 /// PartitionedStorage adapter for integrating with epidemic storage
 pub struct PartitionedStorage<S> {
     /// Underlying storage engine
@@ -515,18 +514,24 @@ impl PartitionManager {
     /// Rebalance using consistent hashing algorithm
     fn rebalance_consistent_hash(&self, nodes: &HashMap<String, StorageNode>) -> Result<()> {
         let node_ids: Vec<String> = nodes.keys().cloned().collect();
-        
+
         // Fundamental architectural invariant: rebalancing requires nodes
         if node_ids.is_empty() {
-            info!("Critical state: No nodes available in topology. Using self-healing mechanism...");
-            info!("Assigning all partitions to local node {} to maintain system integrity", self.node_id);
-            
+            info!(
+                "Critical state: No nodes available in topology. Using self-healing mechanism..."
+            );
+            info!(
+                "Assigning all partitions to local node {} to maintain system integrity",
+                self.node_id
+            );
+
             // Emergency self-assignment to maintain system availability
             for mut partition_entry in self.partitions.iter_mut() {
                 let partition = partition_entry.value_mut();
                 partition.primary = self.node_id.clone();
                 partition.replicas = Vec::new(); // No replicas in emergency mode
-                partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1; // Use imported Ordering
+                partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1;
+                // Use imported Ordering
             }
             return Ok(());
         }
@@ -544,46 +549,60 @@ impl PartitionManager {
         for (i, node_id) in node_ids.iter().enumerate() {
             // Critical: Create a distinct discriminator pattern for each physical node
             let node_index = format!("{:04x}", i);
-            
+
             for v in 0..VIRTUAL_NODE_DENSITY {
                 // Enhanced entropy discriminator with positional encoding
                 let vnode_key = format!("{}-{:08x}-{}", node_id, v, node_index);
                 let hash = calculate_key_hash(&vnode_key);
-                
+
                 // Deterministic hash transformation using idiomatic fold pattern
-                let position = hash.0.iter().take(8).fold(0u64, |acc, &b| (acc << 8) | b as u64);
-                
+                let position = hash
+                    .0
+                    .iter()
+                    .take(8)
+                    .fold(0u64, |acc, &b| (acc << 8) | b as u64);
+
                 // Virtual-to-physical mapping
                 hash_ring.insert(position, node_id.clone());
             }
         }
-        
+
         // Critical topology validation
         if hash_ring.is_empty() {
             return Err(StorageNodeError::Storage(
-                "Critical topology corruption: virtual node injection phase failed".to_string()
+                "Critical topology corruption: virtual node injection phase failed".to_string(),
             ));
         }
-        
+
         // Diagnostic instrumentation with uniform distribution validation
         let unique_physical_nodes = hash_ring.values().collect::<HashSet<_>>().len();
-        info!("Consistent hash ring topology: {} virtual nodes mapped to {} physical nodes", 
-              hash_ring.len(), unique_physical_nodes);
-        
+        info!(
+            "Consistent hash ring topology: {} virtual nodes mapped to {} physical nodes",
+            hash_ring.len(),
+            unique_physical_nodes
+        );
+
         // Foundational correctness assertion
-        assert_eq!(unique_physical_nodes, node_ids.len(),
-                   "Topological invariant violation: physical node count mismatch");
+        assert_eq!(
+            unique_physical_nodes,
+            node_ids.len(),
+            "Topological invariant violation: physical node count mismatch"
+        );
 
         // Partition assignment phase with guaranteed total coverage
         let mut assigned_partitions = 0;
 
         // Pre-cached ring traversal points for optimal concurrency distribution
         let _first_position = hash_ring.iter().next().map(|(pos, _)| *pos).unwrap_or(0);
-        let ring_entries: Vec<(u64, String)> = hash_ring.iter()
+        let ring_entries: Vec<(u64, String)> = hash_ring
+            .iter()
             .map(|(pos, node)| (*pos, node.clone()))
             .collect();
 
-        info!("Executing deterministic partition assignment with {} partitions", self.partitions.len());
+        info!(
+            "Executing deterministic partition assignment with {} partitions",
+            self.partitions.len()
+        );
 
         // Collect partition IDs first to avoid holding iterator during potential map modifications
         let partition_ids: Vec<String> = self.partitions.iter().map(|e| e.key().clone()).collect();
@@ -592,7 +611,11 @@ impl PartitionManager {
         for partition_id in partition_ids {
             // Deterministic partition position using identical hash transformation
             let partition_hash = calculate_key_hash(&partition_id);
-            let position = partition_hash.0.iter().take(8).fold(0u64, |acc, &b| (acc << 8) | b as u64);
+            let position = partition_hash
+                .0
+                .iter()
+                .take(8)
+                .fold(0u64, |acc, &b| (acc << 8) | b as u64);
 
             // Primary node allocation with mandatory assignment guarantee
             let primary_owner = if let Some((_, node_id)) = hash_ring.range(position..).next() {
@@ -636,7 +659,9 @@ impl PartitionManager {
             }
 
             // Phase 2: Wraparound scan if needed
-            if potential_replicas.len() < self.config.replication_factor - 1 && !ring_entries.is_empty() {
+            if potential_replicas.len() < self.config.replication_factor - 1
+                && !ring_entries.is_empty()
+            {
                 // Start from beginning of ring
                 for (pos, node) in &ring_entries {
                     if *pos >= current_pos {
@@ -655,7 +680,8 @@ impl PartitionManager {
             }
 
             // Take final replica set up to replication factor, ensuring correct type
-            let replica_owners: Vec<String> = potential_replicas.into_iter()
+            let replica_owners: Vec<String> = potential_replicas
+                .into_iter()
                 .take(self.config.replication_factor.saturating_sub(1))
                 .collect();
 
@@ -687,41 +713,55 @@ impl PartitionManager {
                     self.create_transfer(partition, &old_primary, &primary_owner)?;
                 }
             } else {
-                 warn!("Partition {} disappeared during rebalance", partition_id);
+                warn!("Partition {} disappeared during rebalance", partition_id);
             }
         }
 
         // Post-assignment verification with comprehensive diagnostics
-        info!("Partition assignment complete: {}/{} partitions assigned", 
-              assigned_partitions, self.partitions.len());
-              
-        assert_eq!(assigned_partitions, self.partitions.len(),
-                   "Assignment invariant violation: incomplete partition coverage");
+        info!(
+            "Partition assignment complete: {}/{} partitions assigned",
+            assigned_partitions,
+            self.partitions.len()
+        );
+
+        assert_eq!(
+            assigned_partitions,
+            self.partitions.len(),
+            "Assignment invariant violation: incomplete partition coverage"
+        );
 
         // Load distribution analysis
-        let max_partitions = self.node_partition_counts
+        let max_partitions = self
+            .node_partition_counts
             .iter()
             .map(|entry| *entry.value())
             .max()
             .unwrap_or(0);
 
-        let min_partitions = self.node_partition_counts
+        let min_partitions = self
+            .node_partition_counts
             .iter()
             .map(|entry| *entry.value())
             .min()
             .unwrap_or(0);
-            
+
         let partition_count = self.partitions.len();
         let node_count = node_ids.len();
         let expected_avg = partition_count as f64 / node_count as f64;
-        
-        info!("Load distribution: avg={:.2} min={} max={} (expected avg={:.2})", 
-              assigned_partitions as f64 / node_count as f64, 
-              min_partitions, max_partitions, expected_avg);
+
+        info!(
+            "Load distribution: avg={:.2} min={} max={} (expected avg={:.2})",
+            assigned_partitions as f64 / node_count as f64,
+            min_partitions,
+            max_partitions,
+            expected_avg
+        );
 
         if max_partitions > self.config.max_partitions_per_node {
-            warn!("Load imbalance detected: max={} exceeds threshold={}", 
-                  max_partitions, self.config.max_partitions_per_node);
+            warn!(
+                "Load imbalance detected: max={} exceeds threshold={}",
+                max_partitions, self.config.max_partitions_per_node
+            );
         }
 
         Ok(())
@@ -877,7 +917,8 @@ impl PartitionManager {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs();
-                partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1; // Use imported Ordering
+                partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1;
+                // Use imported Ordering
             }
         }
 
@@ -1106,7 +1147,8 @@ impl PartitionManager {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0))
                 .as_secs();
-            partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1; // Use imported Ordering
+            partition.generation = self.ring_generation.load(Ordering::SeqCst) + 1;
+            // Use imported Ordering
         }
 
         Ok(())
@@ -1118,7 +1160,10 @@ impl PartitionManager {
         if source.is_empty() || source == target {
             return Ok(());
         }
-        info!("Creating transfer for partition {} from {} to {}", partition.id, source, target);
+        info!(
+            "Creating transfer for partition {} from {} to {}",
+            partition.id, source, target
+        );
 
         // Calculate priority based on several factors
         let priority = {
@@ -1164,7 +1209,8 @@ impl PartitionManager {
 
         // Add to active transfers with priority-based key
         let transfer_key = format!("{}-{}", priority, partition.id);
-        self.active_transfers.insert(transfer_key.clone(), transfer.clone());
+        self.active_transfers
+            .insert(transfer_key.clone(), transfer.clone());
         info!("Added transfer {} to active transfers", transfer_key);
 
         // Clone the Arc before spawning the task
@@ -1184,7 +1230,7 @@ impl PartitionManager {
         if let Some(handler) = handler {
             tokio::spawn(async move {
                 info!("Found handler for source node {}", source_clone);
-                
+
                 // Execute the handler
                 let handler_result = handler(transfer_clone);
 
@@ -1193,7 +1239,7 @@ impl PartitionManager {
                     Ok(_) => {
                         info!("Transfer handler for {} succeeded", partition_id_clone);
                         TransferState::Complete
-                    },
+                    }
                     Err(e) => {
                         error!("Transfer handler for {} failed: {}", partition_id_clone, e);
                         TransferState::Failed
@@ -1201,7 +1247,9 @@ impl PartitionManager {
                 };
 
                 // Update the state in the active_transfers map
-                if let Some(mut entry) = active_transfers_clone.get_mut(&format!("{}-{}", priority_clone, partition_id_clone)) {
+                if let Some(mut entry) = active_transfers_clone
+                    .get_mut(&format!("{}-{}", priority_clone, partition_id_clone))
+                {
                     entry.value_mut().state = final_state;
                     if final_state == TransferState::Complete {
                         entry.value_mut().completion_time = Some(
@@ -1212,22 +1260,29 @@ impl PartitionManager {
                         );
                     }
                 } else {
-                    warn!("Transfer {} disappeared while handler was running", partition_id_clone);
+                    warn!(
+                        "Transfer {} disappeared while handler was running",
+                        partition_id_clone
+                    );
                 }
-                
+
                 // Return a Result to satisfy the expected return type
                 Ok::<(), StorageNodeError>(())
             });
         } else {
             warn!("No transfer handler registered for source node {}", source);
             // Mark transfer as failed immediately
-            if let Some(mut entry) = self.active_transfers.get_mut(&format!("{}-{}", priority, partition.id)) {
+            if let Some(mut entry) = self
+                .active_transfers
+                .get_mut(&format!("{}-{}", priority, partition.id))
+            {
                 entry.value_mut().state = TransferState::Failed;
             }
         }
 
         Ok(())
-    }    /// A proper batching implementation would require a dedicated task/queue.
+    }
+    /// A proper batching implementation would require a dedicated task/queue.
     #[allow(dead_code)]
     async fn execute_transfer_batch(
         &self,
@@ -1252,7 +1307,7 @@ impl PartitionManager {
         let key_str = String::from_utf8_lossy(key);
         // Hash the key
         let hash = calculate_key_hash(&key_str);
-        
+
         // Convert hash to bytes for comparison
         let hash_bytes: &[u8] = &hash.0;
 
@@ -1277,7 +1332,7 @@ impl PartitionManager {
             })
     }
 
-    /// Helper function to check if a hash is within partition bounds 
+    /// Helper function to check if a hash is within partition bounds
     fn partition_contains_hash(start: &[u8], end: &[u8], hash: &[u8]) -> bool {
         // Compare bytes in order
         hash >= start && hash < end
@@ -1366,7 +1421,10 @@ impl PartitionManager {
     }
 
     /// Calculate partition metrics for all partitions
-    pub fn calculate_all_partition_metrics(&self, storage: &dyn StorageEngine) -> Result<Vec<PartitionMetrics>> {
+    pub fn calculate_all_partition_metrics(
+        &self,
+        storage: &dyn StorageEngine,
+    ) -> Result<Vec<PartitionMetrics>> {
         let mut metrics = Vec::new();
         for entry in self.partitions.iter() {
             let partition = entry.value();
@@ -1376,11 +1434,14 @@ impl PartitionManager {
         }
         Ok(metrics)
     }
-         
 
     /// Calculate metrics for a single partition
     #[allow(unused_variables)]
-    fn calculate_partition_metrics(&self, partition: &Partition, storage: &dyn StorageEngine) -> Result<PartitionMetrics> {
+    fn calculate_partition_metrics(
+        &self,
+        partition: &Partition,
+        storage: &dyn StorageEngine,
+    ) -> Result<PartitionMetrics> {
         // This needs to interact with the underlying storage to get real data.
         // For now, simulate based on partition info.
         // In a real system, you'd query the storage engine for keys within the partition range.
@@ -1579,7 +1640,11 @@ impl PartitionManager {
     /// Gets the capacity usage of a node (Simulated)
     fn get_node_capacity_usage(&self, node_id: &str) -> Result<u64> {
         // Simulate capacity usage based on partition count
-        let partition_count = self.node_partition_counts.get(node_id).map(|c| *c).unwrap_or(0);
+        let partition_count = self
+            .node_partition_counts
+            .get(node_id)
+            .map(|c| *c)
+            .unwrap_or(0);
         // Assume each partition takes ~10MB for simulation
         Ok(partition_count as u64 * 10 * 1024 * 1024)
     }
@@ -1606,7 +1671,7 @@ impl PartitionManager {
     {
         let mut handlers = self.transfer_handlers.write();
         handlers.insert(node_id.to_string(), Arc::new(handler));
-        
+
         Ok(())
     }
 
@@ -1639,12 +1704,15 @@ impl PartitionManager {
     }
 
     /// Get partition metrics (requires storage engine access)
-    pub fn get_partition_metrics(&self, partition_id: &str, storage: &dyn StorageEngine) -> Result<PartitionMetrics> {
+    pub fn get_partition_metrics(
+        &self,
+        partition_id: &str,
+        storage: &dyn StorageEngine,
+    ) -> Result<PartitionMetrics> {
         let partition = self.get_partition(partition_id)?;
         self.calculate_partition_metrics(&partition, storage)
     }
 }
-
 
 impl<S> PartitionedStorage<S>
 where
@@ -1692,41 +1760,41 @@ where
         Ok(())
     }
 }
-    
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-    
-        #[test]
-        fn test_partition_for_key() {
-            let manager = PartitionManager::new("test-node".to_string(), PartitionConfig::default());
-            manager.initialize().unwrap();
-    
-            let nodes = vec![
-                StorageNode {
-                    id: "node1".to_string(),
-                    name: "Node 1".to_string(),
-                    region: "region1".to_string(),
-                    public_key: "key1".to_string(),
-                    endpoint: "endpoint1".to_string(),
-                },
-                StorageNode {
-                    id: "node2".to_string(),
-                    name: "Node 2".to_string(),
-                    region: "region1".to_string(),
-                    public_key: "key2".to_string(),
-                    endpoint: "endpoint2".to_string(),
-                },
-                StorageNode {
-                    id: "node3".to_string(),
-                    name: "Node 3".to_string(),
-                    region: "region2".to_string(),
-                    public_key: "key3".to_string(),
-                    endpoint: "endpoint3".to_string(),
-                },
-            ];
-    
-            for node in nodes {
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partition_for_key() {
+        let manager = PartitionManager::new("test-node".to_string(), PartitionConfig::default());
+        manager.initialize().unwrap();
+
+        let nodes = vec![
+            StorageNode {
+                id: "node1".to_string(),
+                name: "Node 1".to_string(),
+                region: "region1".to_string(),
+                public_key: "key1".to_string(),
+                endpoint: "endpoint1".to_string(),
+            },
+            StorageNode {
+                id: "node2".to_string(),
+                name: "Node 2".to_string(),
+                region: "region1".to_string(),
+                public_key: "key2".to_string(),
+                endpoint: "endpoint2".to_string(),
+            },
+            StorageNode {
+                id: "node3".to_string(),
+                name: "Node 3".to_string(),
+                region: "region2".to_string(),
+                public_key: "key3".to_string(),
+                endpoint: "endpoint3".to_string(),
+            },
+        ];
+
+        for node in nodes {
             manager.add_node(node).unwrap();
         }
 
@@ -1736,7 +1804,7 @@ where
         // Test key lookup
         let test_keys = [
             "key1".to_string().into_bytes(),
-            "key2".to_string().into_bytes(), 
+            "key2".to_string().into_bytes(),
             "key3".to_string().into_bytes(),
             "key4".to_string().into_bytes(),
         ];
@@ -1754,7 +1822,6 @@ where
         }
     }
 
-
     #[test]
     fn test_consistent_hash_rebalance() {
         // Create a partition manager with controlled test parameters
@@ -1768,7 +1835,7 @@ where
                 ..Default::default()
             },
         );
-        
+
         // Initialize the partition manager and handle errors properly
         if let Err(e) = manager.initialize() {
             panic!("Failed to initialize partition manager: {:?}", e);
@@ -1810,7 +1877,11 @@ where
 
         // Verify all partitions have a primary assigned
         for (i, partition) in partitions.iter().enumerate() {
-            assert!(!partition.primary.is_empty(), "Partition {} has no primary assigned", i);
+            assert!(
+                !partition.primary.is_empty(),
+                "Partition {} has no primary assigned",
+                i
+            );
         }
 
         // Verify primary assignment distribution
@@ -1819,18 +1890,20 @@ where
             .get("node-0a1b2c3d")
             .map(|c| *c)
             .unwrap_or(0);
-            
+
         let node2_count = manager
             .node_partition_counts
             .get("node-4e5f6g7h")
             .map(|c| *c)
             .unwrap_or(0);
-        
+
         // Total should be equal to partition count
         let total_primary_assignments = node1_count + node2_count;
-        assert_eq!(total_primary_assignments, 16, 
-            "Total primary assignments should equal partition count: got {}, expected 16", 
-            total_primary_assignments);
+        assert_eq!(
+            total_primary_assignments, 16,
+            "Total primary assignments should equal partition count: got {}, expected 16",
+            total_primary_assignments
+        );
 
         // Add a third node to trigger rebalancing
         let node3 = StorageNode {
@@ -1840,7 +1913,7 @@ where
             public_key: "key3".to_string(),
             endpoint: "endpoint3".to_string(),
         };
-        
+
         if let Err(e) = manager.add_node(node3) {
             panic!("Failed to add third node: {:?}", e);
         }
@@ -1849,23 +1922,30 @@ where
         if let Err(e) = manager.rebalance() {
             panic!("Failed to rebalance after adding third node: {:?}", e);
         }
-        
+
         // Verify all partitions still have a primary assigned
         let partitions = manager.get_all_partitions();
         for (i, partition) in partitions.iter().enumerate() {
-            assert!(!partition.primary.is_empty(), "After adding third node, partition {} has no primary assigned", i);
+            assert!(
+                !partition.primary.is_empty(),
+                "After adding third node, partition {} has no primary assigned",
+                i
+            );
         }
-        
+
         // Check transfer operations after topology change
         let transfers = manager.get_active_transfers();
-        
+
         // Check transfers only if the hash ring changed enough to require them
         if !transfers.is_empty() {
             // If transfers exist, verify they have valid source and target nodes
             for transfer in &transfers {
                 assert!(!transfer.source.is_empty(), "Transfer has empty source");
                 assert!(!transfer.target.is_empty(), "Transfer has empty target");
-                assert_ne!(transfer.source, transfer.target, "Transfer source and target are the same");
+                assert_ne!(
+                    transfer.source, transfer.target,
+                    "Transfer source and target are the same"
+                );
             }
         }
 
@@ -1875,13 +1955,13 @@ where
             .get("node-0a1b2c3d")
             .map(|c| *c)
             .unwrap_or(0);
-            
+
         let node2_count = manager
             .node_partition_counts
             .get("node-4e5f6g7h")
             .map(|c| *c)
             .unwrap_or(0);
-            
+
         let node3_count = manager
             .node_partition_counts
             .get("node-8i9j0k1l")
@@ -1890,50 +1970,73 @@ where
 
         // Calculate total assigned partitions (primary assignments only)
         let total = node1_count + node2_count + node3_count;
-        assert_eq!(total, 16, "Total partition assignments mismatch: got {}, expected 16", total);
+        assert_eq!(
+            total, 16,
+            "Total partition assignments mismatch: got {}, expected 16",
+            total
+        );
 
         // Calculate the maximum partitions any node should handle
         let partition_count = manager.get_all_partitions().len();
         let max_allowed = (partition_count as f64 * 0.7).ceil() as usize;
-        
+
         // Ensure no node is overloaded
-        assert!(node1_count <= max_allowed, "Node 1 has too many partitions: {} > {}", node1_count, max_allowed);
-        assert!(node2_count <= max_allowed, "Node 2 has too many partitions: {} > {}", node2_count, max_allowed);
-        assert!(node3_count <= max_allowed, "Node 3 has too many partitions: {} > {}", node3_count, max_allowed);
+        assert!(
+            node1_count <= max_allowed,
+            "Node 1 has too many partitions: {} > {}",
+            node1_count,
+            max_allowed
+        );
+        assert!(
+            node2_count <= max_allowed,
+            "Node 2 has too many partitions: {} > {}",
+            node2_count,
+            max_allowed
+        );
+        assert!(
+            node3_count <= max_allowed,
+            "Node 3 has too many partitions: {} > {}",
+            node3_count,
+            max_allowed
+        );
 
         // Test node removal and rebalancing
         if let Err(e) = manager.remove_node("node-0a1b2c3d") {
             panic!("Failed to remove node from topology: {:?}", e);
         }
-        
+
         // Force rebalance after node removal
         if let Err(e) = manager.rebalance() {
             panic!("Failed to rebalance after node removal: {:?}", e);
         }
-        
+
         // Verify all partitions still have primaries assigned
         let final_partitions = manager.get_all_partitions();
         for (i, partition) in final_partitions.iter().enumerate() {
-            assert!(!partition.primary.is_empty(), "After node removal, partition {} has no primary assigned", i);
+            assert!(
+                !partition.primary.is_empty(),
+                "After node removal, partition {} has no primary assigned",
+                i
+            );
         }
-        
+
         // Verify partition redistribution after node removal
         let remaining_node1_count = manager
             .node_partition_counts
             .get("node-4e5f6g7h")
             .map(|c| *c)
             .unwrap_or(0);
-            
+
         let remaining_node2_count = manager
             .node_partition_counts
             .get("node-8i9j0k1l")
             .map(|c| *c)
             .unwrap_or(0);
-            
+
         // Ensure all partitions are still assigned
         assert_eq!(
-            remaining_node1_count + remaining_node2_count, 
-            16, 
+            remaining_node1_count + remaining_node2_count,
+            16,
             "Missing partition assignments after node removal"
         );
     }

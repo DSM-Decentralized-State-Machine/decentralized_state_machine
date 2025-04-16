@@ -1,5 +1,5 @@
 //! Advanced fraud detection mechanisms for IP address analysis
-//! 
+//!
 //! This module implements sophisticated heuristics and machine learning techniques
 //! to identify VPNs, proxies, data centers, and other potentially fraudulent sources.
 //! The detection pipeline incorporates multiple signals including:
@@ -16,8 +16,8 @@
 //! high recall for actual proxy/VPN detection.
 
 mod detector;
-mod vpn_database;
 mod heuristics;
 mod network_analysis;
+mod vpn_database;
 
 pub use detector::FraudDetector;

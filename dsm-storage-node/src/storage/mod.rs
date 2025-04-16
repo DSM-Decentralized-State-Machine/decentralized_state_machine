@@ -20,9 +20,9 @@ pub mod metrics;
 pub mod partition;
 pub mod reconciliation;
 pub mod routing;
-pub mod topology;
 pub mod sql_storage;
 pub mod tasks;
+pub mod topology;
 pub mod vector_clock;
 
 // Re-export storage types
@@ -32,12 +32,14 @@ pub use epidemic_storage::{EpidemicStorageEngine, EpidemicConfig, TopologyType};
 pub use memory_storage::{EvictionPolicy, MemoryStorage, MemoryStorageConfig};
 pub use sql_storage::SqlStorage;
 
-
 /// Storage engine interface
 #[async_trait]
 pub trait StorageEngine: Send + Sync {
     /// Store a blinded state entry
-    async fn store(&self, entry: BlindedStateEntry) -> Result<crate::types::storage_types::StorageResponse>;
+    async fn store(
+        &self,
+        entry: BlindedStateEntry,
+    ) -> Result<crate::types::storage_types::StorageResponse>;
 
     /// Retrieve a blinded state entry
     async fn retrieve(&self, blinded_id: &str) -> Result<Option<BlindedStateEntry>>;
@@ -85,7 +87,10 @@ impl StorageFactory {
         let config = MemoryStorageConfig {
             max_memory_bytes: 1024 * 1024 * 1024, // 1GB
             max_entries: 1_000_000,
-            persistence_path: Some(PathBuf::from(format!("{}.memdb", self.config.database_path))),
+            persistence_path: Some(PathBuf::from(format!(
+                "{}.memdb",
+                self.config.database_path
+            ))),
             eviction_policy: EvictionPolicy::LRU,
             db_path: self.config.database_path.clone(),
             compression: Some("lz4".to_string()),
@@ -135,7 +140,8 @@ impl StorageFactory {
                 topology_maintenance_interval_ms: 60000,
                 gossip_fanout: 3,
                 max_reconciliation_diff: 100,
-                conflict_resolution_strategy: epidemic_storage::ConflictResolutionStrategy::LastWriteWins,
+                conflict_resolution_strategy:
+                    epidemic_storage::ConflictResolutionStrategy::LastWriteWins,
                 partition_count: 16,
                 replication_factor: 3,
                 partition_strategy: crate::storage::partition::PartitionStrategy::ConsistentHash,
@@ -143,7 +149,7 @@ impl StorageFactory {
                 max_partitions_per_node: 8,
                 k_neighbors: 4,
                 alpha: 0.5,
-                max_long_links: 15,  // Added this missing field
+                max_long_links: 15, // Added this missing field
                 max_topology_connections: 10,
                 topology_connection_timeout_ms: 1000,
                 rebalance_check_interval_ms: Some(60000),
@@ -153,8 +159,8 @@ impl StorageFactory {
             },
             crate::network::NetworkClientFactory::create_client(node.clone())?,
             std::sync::Arc::new(crate::storage::metrics::MetricsCollector::new(
-                crate::storage::metrics::MetricsCollectorConfig::default()
-            ))
+                crate::storage::metrics::MetricsCollectorConfig::default(),
+            )),
         )?;
 
         // Direct return without trying to call start_background_tasks

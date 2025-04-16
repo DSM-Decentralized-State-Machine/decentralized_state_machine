@@ -16,10 +16,15 @@ use tracing::{debug, info};
 use crate::error::Result;
 use crate::network::NetworkClient;
 use crate::storage::metrics::{MetricsCollector, OperationType};
-use crate::storage::partition::{PartitionConfig, PartitionManager, PartitionedStorage, PartitionStrategy};
+use crate::storage::partition::{
+    PartitionConfig, PartitionManager, PartitionedStorage, PartitionStrategy,
+};
 use crate::storage::topology::{NodeId, HybridTopologyConfig, HybridTopology};
 use crate::storage::vector_clock::VectorClock;
-use crate::types::{BlindedStateEntry, storage_types::{StorageResponse, StorageStats}};
+use crate::types::{
+    BlindedStateEntry,
+    storage_types::{StorageResponse, StorageStats},
+};
 
 use super::StorageEngine;
 
@@ -55,7 +60,11 @@ impl From<EpidemicEntry> for StateEntry {
             key: entry.key,
             value: entry.value,
             vector_clock: entry.vector_clock,
-            timestamp: entry.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: entry
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         }
     }
 }
@@ -127,7 +136,10 @@ impl EpidemicStorageEngine {
         network_client: Arc<dyn NetworkClient + Send + Sync>,
         metrics: Arc<MetricsCollector>,
     ) -> Result<Self> {
-        info!("Initializing Epidemic Storage Engine for node: {}", config.node_id);
+        info!(
+            "Initializing Epidemic Storage Engine for node: {}",
+            config.node_id
+        );
 
         // Configure Partition Manager
         let partition_config = PartitionConfig {
@@ -141,12 +153,12 @@ impl EpidemicStorageEngine {
             rebalance_throttle: config.rebalance_throttle.unwrap_or(5),
             min_transfer_interval_ms: config.min_transfer_interval_ms.unwrap_or(5000),
         };
-        
+
         let partition_manager = Arc::new(PartitionManager::new(
             config.node_id.to_string(),
             partition_config,
         ));
-        
+
         // Configure Hybrid Topology
         let topology_config = HybridTopologyConfig {
             structural_connection_count: config.k_neighbors,
@@ -158,11 +170,11 @@ impl EpidemicStorageEngine {
             min_reputation_threshold: 50,
             refresh_interval_seconds: config.topology_maintenance_interval_ms / 1000,
         };
-        
+
         let topology = Arc::new(tokio::sync::RwLock::new(HybridTopology::new(
             config.node_id.clone(),
             topology_config,
-            None // local region
+            None, // local region
         )));
 
         // Set network client and metrics
@@ -189,7 +201,7 @@ impl EpidemicStorageEngine {
             network_client,
             metrics,
         };
-        
+
         // Schedule periodic tasks for epidemic propagation
         let engine_clone = engine.clone();
         tokio::spawn(async move {
@@ -203,14 +215,23 @@ impl EpidemicStorageEngine {
 
     // Internal methods that implement the core functionality but aren't exposed via the StorageEngine trait
     async fn put(&self, key: String, value: Vec<u8>) -> Result<()> {
-        let _timer = self.metrics.start_operation(OperationType::Store, None, Some(key.clone()));
+        let _timer = self
+            .metrics
+            .start_operation(OperationType::Store, None, Some(key.clone()));
 
         if !self.partitioned_storage.is_responsible(key.as_bytes())? {
             // Forward the request to the responsible node(s)
-            let (primary, _) = self.partitioned_storage.get_responsible_nodes(key.as_bytes())?;
-            info!("Not responsible for key {}, forwarding PUT to primary: {}", key, primary);
+            let (primary, _) = self
+                .partitioned_storage
+                .get_responsible_nodes(key.as_bytes())?;
+            info!(
+                "Not responsible for key {}, forwarding PUT to primary: {}",
+                key, primary
+            );
             if primary != self.node_id.to_string() {
-                self.network_client.forward_put(primary.to_string(), key.clone(), value.clone()).await?;
+                self.network_client
+                    .forward_put(primary.to_string(), key.clone(), value.clone())
+                    .await?;
                 return Ok(());
             }
         }
@@ -231,14 +252,24 @@ impl EpidemicStorageEngine {
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let _timer = self.metrics.start_operation(OperationType::Retrieve, None, Some(key.to_string()));
+        let _timer =
+            self.metrics
+                .start_operation(OperationType::Retrieve, None, Some(key.to_string()));
 
         if !self.partitioned_storage.is_responsible(key.as_bytes())? {
             // Forward the request to the responsible node(s)
-            let (primary, _) = self.partitioned_storage.get_responsible_nodes(key.as_bytes())?;
-            info!("Not responsible for key {}, forwarding GET to primary: {}", key, primary);
+            let (primary, _) = self
+                .partitioned_storage
+                .get_responsible_nodes(key.as_bytes())?;
+            info!(
+                "Not responsible for key {}, forwarding GET to primary: {}",
+                key, primary
+            );
             if primary != self.node_id.to_string() {
-                let result = self.network_client.forward_get(primary.to_string(), key.to_string()).await?;
+                let result = self
+                    .network_client
+                    .forward_get(primary.to_string(), key.to_string())
+                    .await?;
                 return Ok(result);
             }
         }
@@ -247,22 +278,29 @@ impl EpidemicStorageEngine {
             Some(entry) => {
                 let value = entry.value().value.clone();
                 Ok(Some(value))
-            },
-            None => {
-                Ok(None)
-            },
+            }
+            None => Ok(None),
         }
     }
 
     async fn delete_internal(&self, key: &str) -> Result<()> {
-        let _timer = self.metrics.start_operation(OperationType::Delete, None, Some(key.to_string()));
+        let _timer =
+            self.metrics
+                .start_operation(OperationType::Delete, None, Some(key.to_string()));
 
         if !self.partitioned_storage.is_responsible(key.as_bytes())? {
             // Forward the request to the responsible node(s)
-            let (primary, _) = self.partitioned_storage.get_responsible_nodes(key.as_bytes())?;
-            info!("Not responsible for key {}, forwarding DELETE to primary: {}", key, primary);
+            let (primary, _) = self
+                .partitioned_storage
+                .get_responsible_nodes(key.as_bytes())?;
+            info!(
+                "Not responsible for key {}, forwarding DELETE to primary: {}",
+                key, primary
+            );
             if primary != self.node_id.to_string() {
-                self.network_client.forward_delete(primary.to_string(), key.to_string()).await?;
+                self.network_client
+                    .forward_delete(primary.to_string(), key.to_string())
+                    .await?;
                 return Ok(());
             }
         }
@@ -277,25 +315,28 @@ impl EpidemicStorageEngine {
             timestamp: SystemTime::now(), // Mark deletion time
         };
 
-        self.local_store.insert(key.to_string(), tombstone_entry.clone());
+        self.local_store
+            .insert(key.to_string(), tombstone_entry.clone());
         debug!("Marked key for deletion (tombstone): {}", key);
 
         Ok(())
     }
-    
+
     fn get_blinded_state_digest(&self) -> HashMap<String, BlindedStateEntry> {
         let mut digest = HashMap::new();
-        
+
         for entry in self.local_store.iter() {
             let key = entry.key().clone();
             let value = entry.value();
-            
+
             // Skip tombstones (empty values)
             if value.value.is_empty() {
                 continue;
             }
-            
-            let timestamp = value.timestamp.duration_since(UNIX_EPOCH)
+
+            let timestamp = value
+                .timestamp
+                .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
 
@@ -312,10 +353,10 @@ impl EpidemicStorageEngine {
 
             digest.insert(key, blinded_entry);
         }
-        
+
         digest
     }
-    
+
     // Initialize periodic tasks for epidemic propagation
     async fn init_periodic_tasks(&self) -> Result<()> {
         // Use get_blinded_state_digest to synchronize with peers periodically
@@ -342,20 +383,23 @@ impl StorageEngine for EpidemicStorageEngine {
     async fn store(&self, entry: BlindedStateEntry) -> Result<StorageResponse> {
         let key = entry.blinded_id.clone();
         let value = entry.encrypted_payload.clone();
-        
+
         self.put(key, value).await?;
-        
+
         Ok(StorageResponse {
             blinded_id: entry.blinded_id,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             status: "success".to_string(),
             message: Some("Stored entry".to_string()),
         })
     }
-    
+
     async fn retrieve(&self, blinded_id: &str) -> Result<Option<BlindedStateEntry>> {
         let data = self.get(blinded_id).await?;
-        
+
         if let Some(value) = data {
             Ok(Some(BlindedStateEntry {
                 blinded_id: blinded_id.to_string(),
@@ -365,48 +409,61 @@ impl StorageEngine for EpidemicStorageEngine {
                 priority: 0,
                 proof_hash: [0u8; 32], // Empty proof hash
                 metadata: HashMap::new(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
             }))
         } else {
             Ok(None)
         }
     }
-    
+
     async fn exists(&self, blinded_id: &str) -> Result<bool> {
         Ok(self.local_store.contains_key(blinded_id))
     }
-    
+
     async fn list(&self, limit: Option<usize>, offset: Option<usize>) -> Result<Vec<String>> {
-        let mut keys = self.local_store.iter()
+        let mut keys = self
+            .local_store
+            .iter()
             .map(|entry| entry.key().clone())
             .collect::<Vec<String>>();
-            
+
         // Apply offset if provided
         if let Some(offset_val) = offset {
             keys = keys.into_iter().skip(offset_val).collect();
         }
-        
+
         // Apply limit if provided
         if let Some(limit_val) = limit {
             keys.truncate(limit_val);
         }
-        
+
         Ok(keys)
     }
-    
+
     async fn get_stats(&self) -> Result<StorageStats> {
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Calculate stats based on local store
         let _total_entries = Some(self.local_store.len() as u64);
         let mut oldest_entry = None;
         let mut newest_entry = None;
         let mut total_expired = Some(0);
         let mut total_bytes = 0;
-        
+
         for entry in self.local_store.iter() {
-            let timestamp = entry.value().timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-            
+            let timestamp = entry
+                .value()
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
             if let Some(oldest) = oldest_entry {
                 if timestamp < oldest {
                     oldest_entry = Some(timestamp);
@@ -414,7 +471,7 @@ impl StorageEngine for EpidemicStorageEngine {
             } else {
                 oldest_entry = Some(timestamp);
             }
-            
+
             if let Some(newest) = newest_entry {
                 if timestamp > newest {
                     newest_entry = Some(timestamp);
@@ -422,10 +479,10 @@ impl StorageEngine for EpidemicStorageEngine {
             } else {
                 newest_entry = Some(timestamp);
             }
-            
+
             // Calculate total bytes
             total_bytes += entry.value().value.len() as u64;
-            
+
             // Simplistic TTL check (3600 seconds)
             if current_time - timestamp > 3600 {
                 if let Some(expired) = total_expired {
@@ -433,7 +490,7 @@ impl StorageEngine for EpidemicStorageEngine {
                 }
             }
         }
-        
+
         let stats = StorageStats {
             total_entries: self.local_store.len(),
             total_expired: total_expired.unwrap_or(0) as usize,
@@ -441,13 +498,13 @@ impl StorageEngine for EpidemicStorageEngine {
             newest_entry,
             total_bytes: total_bytes as usize,
         };
-        
+
         Ok(stats)
     }
-    
+
     async fn delete(&self, blinded_id: &str) -> Result<bool> {
         self.delete_internal(blinded_id).await?;
-        
+
         // Return true to indicate successful deletion
         Ok(true)
     }

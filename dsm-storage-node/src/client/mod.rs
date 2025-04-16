@@ -23,10 +23,10 @@ const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 pub struct StorageNodeClientConfig {
     /// Storage node base URL
     pub base_url: String,
-    
+
     /// API token (if required)
     pub api_token: Option<String>,
-    
+
     /// Request timeout in seconds
     pub timeout_seconds: u64,
 }
@@ -46,13 +46,13 @@ impl Default for StorageNodeClientConfig {
 pub struct StorageNodeClient {
     /// HTTP client for network operations
     http_client: reqwest::Client,
-    
+
     /// Base URL of the storage node
     base_url: Url,
-    
+
     /// API token for authentication
     api_token: Option<String>,
-    
+
     /// Cache for recently accessed data
     cache: RwLock<HashMap<String, Vec<u8>>>,
 }
@@ -62,10 +62,10 @@ pub struct StorageNodeClient {
 pub struct StorageNodeClient {
     /// Base URL of the storage node
     base_url: Url,
-    
+
     /// API token for authentication
     api_token: Option<String>,
-    
+
     /// Cache for recently accessed data
     cache: RwLock<HashMap<String, Vec<u8>>>,
 }
@@ -83,7 +83,9 @@ impl StorageNodeClient {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .build()
-            .map_err(|e| StorageNodeError::Network(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                StorageNodeError::Network(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let base_url = Url::parse(&config.base_url)
             .map_err(|e| StorageNodeError::Config(format!("Invalid base URL: {}", e)))?;
@@ -142,7 +144,7 @@ impl StorageNodeClient {
         payload.insert("key", key.to_string());
         let encoded_data = base64::engine::general_purpose::STANDARD.encode(data);
         payload.insert("data", encoded_data);
-        
+
         if let Some(ttl_value) = ttl {
             payload.insert("ttl", ttl_value.to_string());
         }
@@ -152,18 +154,18 @@ impl StorageNodeClient {
             .send()
             .await
             .map_err(|e| StorageNodeError::Network(format!("Failed to send request: {}", e)))?;
-            
+
         if !response.status().is_success() {
             return Err(StorageNodeError::Network(format!(
                 "Storage node returned error: {}",
                 response.status()
             )));
         }
-        
+
         // Update cache
         let mut cache = self.cache.write().await;
         cache.insert(key.to_string(), data.to_vec());
-        
+
         Ok(())
     }
 
@@ -320,7 +322,7 @@ impl StorageNodeClient {
     }
 
     /// Functions below return errors when reqwest is disabled
-    
+
     pub async fn check_health(&self) -> Result<bool> {
         Err(StorageNodeError::Internal)
     }

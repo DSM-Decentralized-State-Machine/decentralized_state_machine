@@ -7,13 +7,15 @@ pub struct NetworkClientFactory;
 
 impl NetworkClientFactory {
     /// Create a new network client from a storage node
-    pub fn create_client(node: crate::types::StorageNode) -> Result<Arc<dyn NetworkClient + Send + Sync>> {
+    pub fn create_client(
+        node: crate::types::StorageNode,
+    ) -> Result<Arc<dyn NetworkClient + Send + Sync>> {
         // Create the network client implementation
         let client = HttpNetworkClient::new(node.id.clone(), 30000); // Default 30s timeout
 
         // Register the node itself
         let node_client = Arc::new(client);
-        
+
         // Return the client
         Ok(node_client)
     }
@@ -53,13 +55,19 @@ pub trait NetworkClient: Send + Sync {
 
     /// Join a cluster by contacting bootstrap nodes
     async fn join_cluster(&self, bootstrap_nodes: Vec<String>) -> Result<Vec<StorageNode>>;
-    
+
     /// Send a message to another node for topology propagation
-    fn send_message(&self, address: std::net::SocketAddr, message_id: [u8; 32], data: Vec<u8>, ttl: u8) -> Result<()>;
-    
+    fn send_message(
+        &self,
+        address: std::net::SocketAddr,
+        message_id: [u8; 32],
+        data: Vec<u8>,
+        ttl: u8,
+    ) -> Result<()>;
+
     /// Find nodes close to the target ID
     fn find_nodes(&self, target: &crate::storage::topology::NodeId) -> Result<()>;
-    
+
     /// Find nodes in a specific geographic region
     fn find_nodes_in_region(&self, region: u8) -> Result<()>;
 }
@@ -116,14 +124,9 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Sending {} entries to node {}", entries.len(), node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.post(&url).json(&entries).send(),
-        )
-        .await
-        .map_err(|_| {
-            StorageNodeError::Timeout
-        })?;
+        let result = timeout(self.timeout, self.client.post(&url).json(&entries).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
@@ -150,12 +153,9 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Requesting {} entries from node {}", keys.len(), node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.post(&url).json(&keys).send(),
-        )
-        .await
-        .map_err(|_| StorageNodeError::Timeout)?;
+        let result = timeout(self.timeout, self.client.post(&url).json(&keys).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
@@ -182,12 +182,9 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Forwarding PUT for key {} to node {}", key, node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.put(&url).body(value).send(),
-        )
-        .await
-        .map_err(|_| StorageNodeError::Timeout)?;
+        let result = timeout(self.timeout, self.client.put(&url).body(value).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
@@ -214,12 +211,9 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Forwarding GET for key {} to node {}", key, node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.get(&url).send(),
-        )
-        .await
-        .map_err(|_| StorageNodeError::Timeout)?;
+        let result = timeout(self.timeout, self.client.get(&url).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
@@ -251,12 +245,9 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Forwarding DELETE for key {} to node {}", key, node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.delete(&url).send(),
-        )
-        .await
-        .map_err(|_| StorageNodeError::Timeout)?;
+        let result = timeout(self.timeout, self.client.delete(&url).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
@@ -283,18 +274,18 @@ impl NetworkClient for HttpNetworkClient {
 
         debug!("Getting status from node {}", node_id);
 
-        let result = timeout(
-            self.timeout,
-            self.client.get(&url).send(),
-        )
-        .await
-        .map_err(|_| StorageNodeError::Timeout)?;
+        let result = timeout(self.timeout, self.client.get(&url).send())
+            .await
+            .map_err(|_| StorageNodeError::Timeout)?;
 
         match result {
             Ok(response) => {
                 if response.status().is_success() {
                     let status = response.json::<NodeStatus>().await.map_err(|_e| {
-                        StorageNodeError::Serialization(format!("Failed to parse node status: {}", _e))
+                        StorageNodeError::Serialization(format!(
+                            "Failed to parse node status: {}",
+                            _e
+                        ))
                     })?;
                     Ok(status)
                 } else {
@@ -381,13 +372,19 @@ impl NetworkClient for HttpNetworkClient {
             Ok(nodes)
         }
     }
-    
-    fn send_message(&self, address: std::net::SocketAddr, message_id: [u8; 32], data: Vec<u8>, ttl: u8) -> Result<()> {
+
+    fn send_message(
+        &self,
+        address: std::net::SocketAddr,
+        message_id: [u8; 32],
+        data: Vec<u8>,
+        ttl: u8,
+    ) -> Result<()> {
         // Create a future for the async send_message operation
         let future = async {
             let url = format!("http://{}/message", address);
             debug!("Sending message {} to {}", hex::encode(message_id), address);
-            
+
             // Prepare the message payload
             let payload = MessagePayload {
                 message_id,
@@ -399,13 +396,10 @@ impl NetworkClient for HttpNetworkClient {
                     .unwrap_or_default()
                     .as_secs(),
             };
-            
+
             // Send the message with timeout
-            let result = timeout(
-                self.timeout,
-                self.client.post(&url).json(&payload).send()
-            ).await;
-            
+            let result = timeout(self.timeout, self.client.post(&url).json(&payload).send()).await;
+
             match result {
                 Ok(Ok(response)) => {
                     if response.status().is_success() {
@@ -413,10 +407,11 @@ impl NetworkClient for HttpNetworkClient {
                     } else {
                         Err(StorageNodeError::Network(format!(
                             "Failed to send message to {}: HTTP {}",
-                            address, response.status()
+                            address,
+                            response.status()
                         )))
                     }
-                },
+                }
                 Ok(Err(_e)) => Err(StorageNodeError::Network(format!(
                     "Failed to send message to {}: {}",
                     address, _e
@@ -424,125 +419,122 @@ impl NetworkClient for HttpNetworkClient {
                 Err(_) => Err(StorageNodeError::Timeout),
             }
         };
-        
+
         // Execute the future in a synchronous context
         // This is a workaround since the trait method is not async
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => handle.block_on(future),
             Err(_) => {
                 // Create a new runtime if we're not in a tokio context
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|_e| StorageNodeError::Internal)?;
+                let rt = tokio::runtime::Runtime::new().map_err(|_e| StorageNodeError::Internal)?;
                 rt.block_on(future)
             }
         }
     }
-    
+
     fn find_nodes(&self, target: &crate::storage::topology::NodeId) -> Result<()> {
         // Create a future for the async find_nodes operation
         let target_clone = target.clone();
         let future = async move {
             debug!("Finding nodes close to target ID: {}", target_clone);
-            
+
             // Get immediate neighbors to query
             let registry = self.node_registry.read().await;
             let neighbors: Vec<(String, String)> = registry.clone().into_iter().take(3).collect();
-            
+
             if neighbors.is_empty() {
                 return Err(StorageNodeError::NodeManagement(
-                    "No known nodes to query".to_string()
+                    "No known nodes to query".to_string(),
                 ));
             }
-            
+
             // Query each neighbor for nodes close to the target
             for (node_id, endpoint) in neighbors {
                 let url = format!("{}/find_nodes/{}", endpoint, target_clone);
-                
-                match timeout(
-                    self.timeout,
-                    self.client.get(&url).send()
-                ).await {
+
+                match timeout(self.timeout, self.client.get(&url).send()).await {
                     Ok(Ok(response)) => {
                         if response.status().is_success() {
                             // Process response
                             debug!("Received response from node {} for find_nodes", node_id);
                         } else {
-                            warn!("Failed find_nodes query to {}: HTTP {}", 
-                                node_id, response.status());
+                            warn!(
+                                "Failed find_nodes query to {}: HTTP {}",
+                                node_id,
+                                response.status()
+                            );
                         }
-                    },
+                    }
                     Ok(Err(_)) => {
                         warn!("Failed to send find_nodes query to {}", node_id);
-                    },
+                    }
                     Err(_) => {
                         warn!("Timeout querying node {} for find_nodes", node_id);
                     }
                 }
             }
-            
+
             Ok(())
         };
-        
+
         // Execute the future in a synchronous context
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => handle.block_on(future),
             Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                                    .map_err(|_| StorageNodeError::Internal)?;
+                let rt = tokio::runtime::Runtime::new().map_err(|_| StorageNodeError::Internal)?;
                 rt.block_on(future)
             }
         }
     }
-    
+
     fn find_nodes_in_region(&self, region: u8) -> Result<()> {
         // Create a future for the async find_nodes_in_region operation
         let future = async move {
             debug!("Finding nodes in region: {}", region);
-            
+
             // Get some known nodes to query
             let registry = self.node_registry.read().await;
             let nodes: Vec<(String, String)> = registry.clone().into_iter().take(5).collect();
-            
+
             if nodes.is_empty() {
                 return Err(StorageNodeError::NodeManagement(
-                    "No known nodes to query".to_string()
+                    "No known nodes to query".to_string(),
                 ));
             }
-            
+
             // Query each node for nodes in the specified region
             for (node_id, endpoint) in nodes {
                 let url = format!("{}/find_nodes_in_region/{}", endpoint, region);
-                
-                match timeout(
-                    self.timeout,
-                    self.client.get(&url).send()
-                ).await {
+
+                match timeout(self.timeout, self.client.get(&url).send()).await {
                     Ok(Ok(response)) => {
                         if response.status().is_success() {
                             debug!("Received response from node {} for region query", node_id);
                         } else {
-                            warn!("Failed region query to {}: HTTP {}", 
-                                node_id, response.status());
+                            warn!(
+                                "Failed region query to {}: HTTP {}",
+                                node_id,
+                                response.status()
+                            );
                         }
-                    },
+                    }
                     Ok(Err(_)) => {
                         warn!("Failed to send region query to {}", node_id);
-                    },
+                    }
                     Err(_) => {
                         warn!("Timeout querying node {} for region", node_id);
                     }
                 }
             }
-            
+
             Ok(())
         };
-        
+
         // Execute the future in a synchronous context
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => handle.block_on(future),
             Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|_| StorageNodeError::Internal)?;
+                let rt = tokio::runtime::Runtime::new().map_err(|_| StorageNodeError::Internal)?;
                 rt.block_on(future)
             }
         }
@@ -632,15 +624,21 @@ impl NetworkClient for MockNetworkClient {
             endpoint: "http://localhost:8000".to_string(),
         }])
     }
-    
-    fn send_message(&self, _address: std::net::SocketAddr, _message_id: [u8; 32], _data: Vec<u8>, _ttl: u8) -> Result<()> {
+
+    fn send_message(
+        &self,
+        _address: std::net::SocketAddr,
+        _message_id: [u8; 32],
+        _data: Vec<u8>,
+        _ttl: u8,
+    ) -> Result<()> {
         Ok(())
     }
-    
+
     fn find_nodes(&self, _target: &crate::storage::topology::NodeId) -> Result<()> {
         Ok(())
     }
-    
+
     fn find_nodes_in_region(&self, _region: u8) -> Result<()> {
         Ok(())
     }

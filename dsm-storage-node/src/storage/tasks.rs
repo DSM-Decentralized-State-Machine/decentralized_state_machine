@@ -1628,8 +1628,8 @@ mod tests {
         // Wait for completion
         scheduler.wait_for_task(&task_id).await.unwrap();
 
-// Check task metadata
-let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
+        // Check task metadata
+        let metadata = scheduler.get_task_metadata(&task_id).await.unwrap();
         assert_eq!(metadata.state, TaskState::Completed);
 
         // Shutdown scheduler

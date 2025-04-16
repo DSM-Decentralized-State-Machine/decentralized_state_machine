@@ -1000,9 +1000,12 @@ mod tests {
         // Should have merged vector clocks
         assert_eq!(result.resolved_entry.vector_clock.get("node1"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node2"), 1);
-        
+
         // Ensure we have a conflict record since we reconciled multiple entries
-        assert!(result.conflict_record.is_some(), "Expected a conflict record to be generated");
+        assert!(
+            result.conflict_record.is_some(),
+            "Expected a conflict record to be generated"
+        );
     }
 
     #[tokio::test]
@@ -1031,9 +1034,12 @@ mod tests {
         assert_eq!(result.resolved_entry.vector_clock.get("node2"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node3"), 1);
         assert_eq!(result.resolved_entry.vector_clock.get("node4"), 1);
-        
+
         // Make sure we have a conflict record since we had multiple entries
-        assert!(result.conflict_record.is_some(), "Expected a conflict record to be generated");
+        assert!(
+            result.conflict_record.is_some(),
+            "Expected a conflict record to be generated"
+        );
     }
 
     #[tokio::test]

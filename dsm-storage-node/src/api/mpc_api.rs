@@ -64,13 +64,13 @@ pub async fn handle_entropy_request(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    
+
     // Create a Blake3 hasher and mix in all entropy sources
     let mut hasher = blake3::Hasher::new();
     hasher.update(&entropy);
     hasher.update(&timestamp.to_le_bytes());
     hasher.update(process_id.as_bytes());
-    
+
     // Get the final entropy value
     let final_entropy = hasher.finalize().as_bytes().to_vec();
 
@@ -90,7 +90,7 @@ pub async fn handle_entropy_request(
     let serialized = serde_json::to_vec(&value).map_err(|e| {
         StorageNodeError::Serialization(format!("Failed to serialize entropy data: {}", e))
     })?;
-    
+
     let entry = BlindedStateEntry {
         blinded_id: mpc_key.clone(),
         encrypted_payload: serialized,
@@ -108,25 +108,31 @@ pub async fn handle_entropy_request(
     let process_key = format!("mpc-process:{}", process_id);
     if let Some(process_entry) = storage_engine.retrieve(&process_key).await? {
         // Parse the existing MPC process data
-        let mut process_json: serde_json::Value = 
+        let mut process_json: serde_json::Value =
             serde_json::from_slice(&process_entry.encrypted_payload).map_err(|e| {
                 StorageNodeError::Serialization(format!("Failed to deserialize MPC process: {}", e))
             })?;
-        
+
         // Add the entropy contribution if there's a participants structure
         if let Some(participants) = process_json.get_mut("participants") {
             if let Some(participant) = participants.get_mut(request.node_id.as_str()) {
                 // Update the participant's entropy contribution
                 participant["entropy_contribution"] = serde_json::to_value(&final_entropy)
                     .map_err(|e| {
-                        StorageNodeError::Serialization(format!("Failed to serialize entropy: {}", e))
+                        StorageNodeError::Serialization(format!(
+                            "Failed to serialize entropy: {}",
+                            e
+                        ))
                     })?;
-                
+
                 // Store the updated process
                 let updated_process = serde_json::to_vec(&process_json).map_err(|e| {
-                    StorageNodeError::Serialization(format!("Failed to serialize updated MPC process: {}", e))
+                    StorageNodeError::Serialization(format!(
+                        "Failed to serialize updated MPC process: {}",
+                        e
+                    ))
                 })?;
-                
+
                 let updated_entry = BlindedStateEntry {
                     blinded_id: process_key.clone(),
                     encrypted_payload: updated_process,
@@ -164,21 +170,25 @@ pub async fn get_entropy_contribution(
     storage_engine: Arc<dyn StorageEngine + Send + Sync>,
 ) -> Result<Option<Vec<u8>>> {
     let mpc_key = format!("mpc-entropy:{}:{}", process_id, node_id);
-    
+
     if let Some(entry) = storage_engine.retrieve(&mpc_key).await? {
-        let value: serde_json::Value = serde_json::from_slice(&entry.encrypted_payload).map_err(|e| {
-            StorageNodeError::Serialization(format!("Failed to deserialize entropy data: {}", e))
-        })?;
-        
+        let value: serde_json::Value =
+            serde_json::from_slice(&entry.encrypted_payload).map_err(|e| {
+                StorageNodeError::Serialization(format!(
+                    "Failed to deserialize entropy data: {}",
+                    e
+                ))
+            })?;
+
         if let Some(entropy_array) = value["entropy"].as_array() {
             let entropy = entropy_array
                 .iter()
                 .map(|v| v.as_u64().unwrap_or(0) as u8)
                 .collect::<Vec<u8>>();
-            
+
             return Ok(Some(entropy));
         }
     }
-    
+
     Ok(None)
 }
