@@ -20,4 +20,5 @@ mod heuristics;
 mod network_analysis;
 mod vpn_database;
 
+#[allow(unused_imports)]
 pub use detector::FraudDetector;

@@ -7,4 +7,5 @@
 
 mod geoip_service;
 
+#[allow(unused_imports)]
 pub use geoip_service::GeoIpService;

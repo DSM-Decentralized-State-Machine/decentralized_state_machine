@@ -59,6 +59,22 @@ enum TransactionState {
 
 #[allow(dead_code)]
 impl SnapshotStore {
+    /// Add an IP entry to the store
+    pub async fn add_ip_entry(&self, entry: IpEntry) -> Result<()> {
+        // In a production implementation, this would add to a database
+        // For now, we'll just log the action
+        debug!("Adding IP entry: {}", entry.ip);
+        // This would be implemented to store in a database
+        Ok(())
+    }
+    
+    /// Create a new snapshot with the given ID and metadata
+    pub async fn create_snapshot(&self, id: &str, _metadata: SnapshotMetadata) -> Result<usize> {
+        // In this placeholder implementation, we'll just return a mock count
+        // In a real implementation, this would create a snapshot from the collected IPs
+        debug!("Creating snapshot with ID: {}", id);
+        Ok(100) // Mock count of IPs in the snapshot
+    }
     /// Create a new snapshot store
     pub async fn new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
@@ -278,7 +294,7 @@ impl SnapshotStore {
 
         // Write metadata
         let metadata_json =
-            serde_json::to_string_pretty(&metadata).map_err(|e| SnapshotError::Serialization(e))?;
+            serde_json::to_string_pretty(&metadata).map_err(SnapshotError::Serialization)?;
 
         fs::write(&transaction.metadata_path, metadata_json)
             .await
@@ -286,7 +302,7 @@ impl SnapshotStore {
 
         // Write data
         let data_json =
-            serde_json::to_string_pretty(&entries).map_err(|e| SnapshotError::Serialization(e))?;
+            serde_json::to_string_pretty(&entries).map_err(SnapshotError::Serialization)?;
 
         fs::write(&transaction.data_path, data_json)
             .await
@@ -325,7 +341,7 @@ impl SnapshotStore {
             .map_err(|e| SnapshotError::Database(format!("Failed to read metadata: {}", e)))?;
 
         let metadata = serde_json::from_str::<SnapshotMetadata>(&metadata_str)
-            .map_err(|e| SnapshotError::Serialization(e))?;
+            .map_err(SnapshotError::Serialization)?;
 
         // Load data
         let data_path = snapshot_dir.join("data.json");
@@ -334,7 +350,7 @@ impl SnapshotStore {
             .map_err(|e| SnapshotError::Database(format!("Failed to read data: {}", e)))?;
 
         let entries = serde_json::from_str::<Vec<IpEntry>>(&data_str)
-            .map_err(|e| SnapshotError::Serialization(e))?;
+            .map_err(SnapshotError::Serialization)?;
 
         Ok((entries, metadata))
     }
@@ -388,7 +404,7 @@ impl SnapshotStore {
 
         // Add metadata to the hash
         let metadata_json =
-            serde_json::to_string(&metadata).map_err(|e| SnapshotError::Serialization(e))?;
+            serde_json::to_string(&metadata).map_err(SnapshotError::Serialization)?;
         hasher.update(metadata_json.as_bytes());
 
         // Sort entries by IP for deterministic ordering
@@ -419,7 +435,7 @@ impl SnapshotStore {
 
         // Write to file
         let json_str = serde_json::to_string_pretty(&export_data)
-            .map_err(|e| SnapshotError::Serialization(e))?;
+            .map_err(SnapshotError::Serialization)?;
 
         fs::write(output_path, json_str)
             .await

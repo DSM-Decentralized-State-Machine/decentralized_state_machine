@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use tracing::error;
 
 /// Global metrics registry
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
+static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
 /// Metrics collection for the IP snapshot service
 #[derive(Debug)]

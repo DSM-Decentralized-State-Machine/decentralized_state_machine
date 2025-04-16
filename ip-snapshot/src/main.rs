@@ -34,7 +34,7 @@ enum Commands {
 
         /// Path to GeoIP database
         #[arg(short, long, value_name = "FILE")]
-        _geoip: Option<PathBuf>,
+        geoip: Option<PathBuf>,
 
         /// Listen address:port
         #[arg(short, long, default_value = "0.0.0.0:3000")]
@@ -77,14 +77,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Collect {
             config,
-            _geoip,
+            geoip,
             listen,
         } => {
             info!("Starting IP collection server on {}", listen);
 
             // Load config
             let config_path = config.unwrap_or_else(|| PathBuf::from("config.json"));
-            let config = match SnapshotConfig::from_file(&config_path).await {
+            let mut config = match SnapshotConfig::from_file(&config_path).await {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     info!(
@@ -94,6 +94,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     SnapshotConfig::default()
                 }
             };
+            
+            // Set GeoIP database path from command line if provided
+            if let Some(path) = geoip {
+                config.geoip_path = Some(path);
+            }
 
             // Initialize snapshot store
             let store = SnapshotStore::new(&config.data_dir)

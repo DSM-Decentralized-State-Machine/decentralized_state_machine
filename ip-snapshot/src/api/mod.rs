@@ -56,14 +56,13 @@ pub async fn start_api_server(
     let collector = IpCollector::new(config.clone(), Arc::new(store.clone())).await?;
     let collector_tx = collector.command_sender();
 
-    // Spawn collector service in a way that ensures thread safety
-    // Use a properly scoped block to ensure any non-Send types don't leak into the spawned task
-    {
-        let safe_collector = collector;
-        tokio::task::spawn_local(async move {
-            safe_collector.run().await;
-        });
-    }
+    // Spawn collector service using a proper LocalSet for thread-local tasks
+    let local = tokio::task::LocalSet::new();
+    
+    // This needs to run on the LocalSet
+    local.spawn_local(async move {
+        collector.run().await;
+    });
 
     // Create shared state
     let state = AppState {
@@ -110,14 +109,17 @@ pub async fn start_api_server(
     // Start server
     info!("Starting IP collection server on {}", addr);
     let make_service = app.into_make_service_with_connect_info::<SocketAddr>();
-    axum::Server::bind(&addr)
-        .serve(make_service)
-        .await
-        .map_err(|e| SnapshotError::Api(format!("Server error: {}", e)))?;
+    
+    // Run the LocalSet and server together
+    local.run_until(async move {
+        axum::Server::bind(&addr)
+            .serve(make_service)
+            .await
+            .map_err(|e| SnapshotError::Api(format!("Server error: {}", e)))
+    }).await?;
 
     Ok(())
 }
-
 /// Handle API errors with appropriate status codes and structured responses
 impl IntoResponse for SnapshotError {
     fn into_response(self) -> Response {

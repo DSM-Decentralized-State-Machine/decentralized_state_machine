@@ -430,7 +430,7 @@ fn xor_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
-    use crate::types::{GeoInformation, NetworkInformation};
+    use crate::types::{GeoInformation, NetworkInformation, IpSource};
 
     fn create_test_entry(ip: IpAddr, country: &str, legitimacy_score: u8) -> IpEntry {
         let now = Utc::now();
@@ -456,6 +456,7 @@ mod tests {
                 user_agents: Vec::new(),
                 proxy_headers: HashMap::new(),
                 network_range: None,
+                source: IpSource::Manual,
             },
             legitimacy_score,
             verification_hash: String::new(), // Will be calculated

@@ -58,6 +58,7 @@ impl IpEntry {
     }
 
     /// Update the entry with a new connection
+    #[allow(dead_code)]
     pub fn record_connection(&mut self) {
         self.last_seen = Utc::now();
         self.connection_count += 1;
@@ -65,18 +66,21 @@ impl IpEntry {
     }
 
     /// Set geolocation information
+    #[allow(dead_code)]
     pub fn set_geo(&mut self, geo: GeoInformation) {
         self.geo = Some(geo);
         self.update_verification_hash();
     }
 
     /// Update network information
+    #[allow(dead_code)]
     pub fn set_network(&mut self, network: NetworkInformation) {
         self.network = network;
         self.update_verification_hash();
     }
 
     /// Set legitimacy score
+    #[allow(dead_code)]
     pub fn set_legitimacy_score(&mut self, score: u8) {
         self.legitimacy_score = score;
         self.update_verification_hash();
@@ -138,7 +142,7 @@ impl IpEntry {
 }
 
 /// Geolocation information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GeoInformation {
     /// Country code (ISO 3166-1 alpha-2)
     pub country_code: Option<String>,
@@ -160,7 +164,7 @@ pub struct GeoInformation {
 }
 
 /// Network information
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInformation {
     /// Autonomous System Number
     pub asn: Option<u32>,
@@ -183,6 +187,24 @@ pub struct NetworkInformation {
 
     /// Network range this IP belongs to
     pub network_range: Option<String>,
+    
+    /// Source of the IP
+    pub source: IpSource,
+}
+
+impl Default for NetworkInformation {
+    fn default() -> Self {
+        Self {
+            asn: None,
+            asn_org: None,
+            latency: HashMap::new(),
+            tcp_fingerprint: None,
+            user_agents: Vec::new(),
+            proxy_headers: HashMap::new(),
+            network_range: None,
+            source: IpSource::PassiveCollection,
+        }
+    }
 }
 
 /// Snapshot metadata
@@ -190,6 +212,12 @@ pub struct NetworkInformation {
 pub struct SnapshotMetadata {
     /// Unique identifier for this snapshot
     pub id: String,
+    
+    /// Snapshot description
+    pub description: String,
+    
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
 
     /// Timestamp when the snapshot was started
     pub start_time: DateTime<Utc>,
@@ -246,6 +274,7 @@ pub struct VerificationResult {
 
 /// IP collector state
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CollectorState {
     /// Collection of IP entries
     pub ip_entries: Arc<DashMap<IpAddr, IpEntry>>,
@@ -336,6 +365,21 @@ pub struct CollectionStats {
 
     /// Collection duration in seconds
     pub duration_seconds: u64,
+}
+
+/// Sources of IP addresses
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IpSource {
+    /// API endpoints
+    ApiEndpoint,
+    /// Active scanning
+    ActiveScan,
+    /// Passive collection
+    PassiveCollection,
+    /// Manually added
+    Manual,
+    /// External source
+    External(String),
 }
 
 /// API response wrapper

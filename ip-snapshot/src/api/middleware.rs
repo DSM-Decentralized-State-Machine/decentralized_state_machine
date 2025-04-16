@@ -13,17 +13,20 @@ use tracing::debug;
 /// Middleware for extracting the real IP address from various headers
 /// This handles common proxy headers like X-Forwarded-For, X-Real-IP, etc.
 #[allow(dead_code)]
-pub async fn extract_real_ip<B>(mut request: Request<B>, next: Next<B>) -> Response {
+pub async fn extract_real_ip<B>(
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Response {
     // IP extraction logic with header priority:
     // 1. X-Forwarded-For (first IP in comma-separated list)
     // 2. X-Real-IP
     // 3. CF-Connecting-IP (Cloudflare)
     // 4. True-Client-IP
     let real_ip = extract_ip_from_headers(&request);
-
+    
     // Add real IP to request extensions
     request.extensions_mut().insert(real_ip);
-
+    
     // Continue to the next middleware or handler
     next.run(request).await
 }
@@ -37,7 +40,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             for part in forwarded_str.split(';') {
                 if let Some(for_part) = part.trim().strip_prefix("for=") {
                     let for_ip = for_part.trim().trim_matches('"');
-
+                    
                     // Remove port if present
                     let ip_str = if for_ip.starts_with('[') {
                         // IPv6 with possible port
@@ -56,7 +59,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
                     } else {
                         for_ip
                     };
-
+                    
                     if let Ok(ip) = IpAddr::from_str(ip_str) {
                         debug!("Extracted IP from Forwarded header: {}", ip);
                         return Some(ip);
@@ -65,7 +68,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             }
         }
     }
-
+    
     // Extract from X-Forwarded-For header (first IP in comma-separated list)
     if let Some(forwarded_for) = request.headers().get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded_for.to_str() {
@@ -78,7 +81,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             }
         }
     }
-
+    
     // Extract from X-Real-IP header
     if let Some(real_ip) = request.headers().get("x-real-ip") {
         if let Ok(ip_str) = real_ip.to_str() {
@@ -88,7 +91,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             }
         }
     }
-
+    
     // Extract from Cloudflare-specific header
     if let Some(cf_ip) = request.headers().get("cf-connecting-ip") {
         if let Ok(ip_str) = cf_ip.to_str() {
@@ -98,7 +101,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             }
         }
     }
-
+    
     // Extract from Akamai and others
     if let Some(true_client_ip) = request.headers().get("true-client-ip") {
         if let Ok(ip_str) = true_client_ip.to_str() {
@@ -108,7 +111,7 @@ fn extract_ip_from_headers<B>(request: &Request<B>) -> Option<IpAddr> {
             }
         }
     }
-
+    
     // No valid IP found in headers
     None
 }
@@ -124,7 +127,7 @@ pub struct ExtractRealIpLayer;
 
 impl<S> Layer<S> for ExtractRealIpLayer {
     type Service = ExtractRealIpService<S>;
-
+    
     fn layer(&self, service: S) -> Self::Service {
         ExtractRealIpService { inner: service }
     }
@@ -145,26 +148,24 @@ where
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
-
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
-
+    
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
-
+        
         Box::pin(async move {
             // Extract the real IP
             let real_ip = extract_ip_from_headers(&req);
-
+            
             // Add it to request extensions
             let mut req = req;
             req.extensions_mut().insert(real_ip);
-
+            
             // Continue with the request
             inner.call(req).await
         })
@@ -185,6 +186,6 @@ pub async fn validate_client_ip<B>(
 ) -> Response {
     // Implement validation logic here
     // For now, we just pass through all IPs
-
+    
     next.run(request).await
 }

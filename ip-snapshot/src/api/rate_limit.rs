@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 
 /// Global rate limiters for IP collections
 #[allow(dead_code)]
-static GLOBAL_RATE_LIMITERS: Lazy<GlobalRateLimiters> = Lazy::new(|| GlobalRateLimiters::new());
+static GLOBAL_RATE_LIMITERS: Lazy<GlobalRateLimiters> = Lazy::new(GlobalRateLimiters::new);
 
 /// Rate limiter types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

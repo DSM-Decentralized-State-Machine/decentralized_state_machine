@@ -37,6 +37,7 @@ pub struct FraudDetector {
 
 impl FraudDetector {
     /// Create a new fraud detector instance
+    #[allow(dead_code)]
     pub fn new(config: &SnapshotConfig) -> Self {
         // Initialize with default empty databases
         let vpn_subnets = Arc::new(DashMap::new());
@@ -70,6 +71,7 @@ impl FraudDetector {
     }
 
     /// Populate detector with known VPN subnet ranges
+    #[allow(dead_code)]
     fn populate_default_vpn_ranges(&self) {
         // Add some well-known VPN providers
         // In a real implementation, this would load from a comprehensive database
@@ -113,6 +115,7 @@ impl FraudDetector {
     }
 
     /// Populate ASN reputation database
+    #[allow(dead_code)]
     fn populate_asn_reputation(&self) {
         // Add reputation scores for some known ASNs
         // In a real implementation, this would load from a comprehensive database
