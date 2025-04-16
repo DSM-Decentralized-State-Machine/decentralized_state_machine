@@ -55,6 +55,8 @@ pub enum DsmError {
         context: String,
         /// Optional source error that caused this error
         source: Option<Box<dyn Error + Send + Sync>>,
+        entity: String,
+        details: Option<String>,
     },
     /// Ivalid key length error
     /// Occurs when an operation receives or attempts to use an invalid key length.
@@ -72,6 +74,10 @@ pub enum DsmError {
         entity: String,
         /// Additional details about the lookup
         details: Option<String>,
+        /// Context of the error
+        context: String,
+        /// Optional source error
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
 
     /// Internal implementation errors
@@ -108,6 +114,8 @@ pub enum DsmError {
         context: String,
         /// Optional source error that caused this error
         source: Option<Box<dyn Error + Send + Sync>>,
+        entity: String,
+        details: Option<String>,
     },
 
     /// Verification failures
@@ -307,6 +315,8 @@ impl DsmError {
         DsmError::Network {
             context: context.into(),
             source: source.map(|e| Box::new(e) as Box<dyn Error + Send + Sync>),
+            entity: String::new(),
+            details: None,
         }
     }
 
@@ -321,12 +331,12 @@ impl DsmError {
     /// Creates a new "not found" error
     ///
     /// # Arguments
-    /// * `entity` - The type of entity that was not found
-    /// * `details` - Optional additional details about the lookup
     pub fn not_found(entity: impl Into<String>, details: Option<impl Into<String>>) -> Self {
         DsmError::NotFound {
             entity: entity.into(),
             details: details.map(|d| d.into()),
+            context: String::from("Entity not found"),
+            source: None,
         }
     }
 
@@ -388,6 +398,8 @@ impl DsmError {
         DsmError::Serialization {
             context: context.into(),
             source: source.map(|e| Box::new(e) as Box<dyn Error + Send + Sync>),
+            entity: "Data".to_string(),
+            details: None,
         }
     }
 
@@ -605,6 +617,8 @@ impl DsmError {
         DsmError::Network {
             context: format!("Timeout: {}", message.into()),
             source: None,
+            entity: "Network".to_string(),
+            details: None,
         }
     }
 
@@ -704,7 +718,7 @@ impl Display for DsmError {
                 }
                 Ok(())
             }
-            DsmError::Network { context, source } => {
+            DsmError::Network { context, source, entity: _, details: _ } => {
                 write!(f, "Network error: {}", context)?;
                 if let Some(s) = source {
                     write!(f, " - caused by: {}", s)?;
@@ -712,11 +726,12 @@ impl Display for DsmError {
                 Ok(())
             }
             DsmError::StateMachine(msg) => write!(f, "State machine error: {}", msg),
-            DsmError::NotFound { entity, details } => {
+            DsmError::NotFound { entity, details, context, source: _ } => {
                 write!(f, "{} not found", entity)?;
                 if let Some(d) = details {
                     write!(f, ": {}", d)?;
                 }
+                write!(f, " ({})", context)?;
                 Ok(())
             }
             DsmError::Internal { context, source } => {
@@ -734,7 +749,7 @@ impl Display for DsmError {
                 Ok(())
             }
             DsmError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
-            DsmError::Serialization { context, source } => {
+            DsmError::Serialization { context, source, entity: _, details: _ } => {
                 write!(f, "Serialization error: {}", context)?;
                 if let Some(s) = source {
                     write!(f, " - caused by: {}", s)?;
@@ -936,6 +951,7 @@ impl From<serde_json::Error> for DsmError {
 
 // Add From implementation for PoisonError after the other From implementations
 
+// Add From implementations for PoisonError to handle poisoned locks
 // Add From implementations for PoisonError to handle poisoned locks
 impl<T> From<std::sync::PoisonError<T>> for DsmError {
     fn from(_err: std::sync::PoisonError<T>) -> Self {

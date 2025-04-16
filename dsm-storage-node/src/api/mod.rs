@@ -19,11 +19,13 @@ use tracing::info;
 
 mod handlers;
 mod middleware;
+mod mpc_api;
 mod rewards_api;
 mod unilateral_api;
 mod vault_api;
 
 pub use handlers::*;
+pub use mpc_api::*;
 pub use rewards_api::*;
 pub use unilateral_api::*;
 pub use vault_api::*;
@@ -99,6 +101,7 @@ impl From<StorageNodeError> for ApiError {
             StorageNodeError::QueueFull(msg) => ("QUEUE_FULL", msg),
             StorageNodeError::ReceiveFailure(msg) => ("RECEIVE_FAILURE", msg),
             StorageNodeError::InvalidOperation(msg) => ("INVALID_OPERATION", msg),
+            StorageNodeError::InvalidInput(msg) => ("INVALID_INPUT", msg),
             StorageNodeError::ConcurrencyLimitExceeded => (
                 "CONCURRENCY_LIMIT_EXCEEDED",
                 "Concurrency limit exceeded".to_string(),

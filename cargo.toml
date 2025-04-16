@@ -4,6 +4,7 @@ members = [
     "dsm-storage-node",
     "dsm-ethereum-bridge",
     "dsm-sdk",
+   #"ip-snapshot",
 ]
 resolver = "2"
 

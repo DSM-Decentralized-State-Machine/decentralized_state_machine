@@ -69,7 +69,12 @@ impl From<CommitmentError> for DsmError {
         match err {
             CommitmentError::Crypto { context, source } => DsmError::Crypto { context, source },
             CommitmentError::Serialization { context, source } => {
-                DsmError::Serialization { context, source }
+                DsmError::Serialization { 
+                    context,
+                    source,
+                    entity: "commitment".to_string(),
+                    details: None
+                }
             }
             CommitmentError::Verification { context } => DsmError::Validation {
                 context,

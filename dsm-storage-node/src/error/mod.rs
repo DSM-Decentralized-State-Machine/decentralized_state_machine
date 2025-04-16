@@ -131,6 +131,10 @@ pub enum StorageNodeError {
     /// Receive failure
     #[error("Receive failure: {0}")]
     ReceiveFailure(String),
+
+    /// Invalid input
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// Implement IntoResponse for StorageNodeError so it can be returned directly from handlers
@@ -181,6 +185,7 @@ impl IntoResponse for StorageNodeError {
             StorageNodeError::TaskFailed(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             StorageNodeError::QueueFull(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             StorageNodeError::ReceiveFailure(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            StorageNodeError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         let body = Json(serde_json::json!({

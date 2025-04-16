@@ -93,6 +93,7 @@ tokio-stream = { version = "0.1.14", optional = true, features = ["sync"] }
 
 # Storage
 rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"] }
+# Removed dsm-storage-node dependency to avoid circular dependency
 
 # Compression
 flate2 = "1.0.28"  # For serialization_metrics benchmark

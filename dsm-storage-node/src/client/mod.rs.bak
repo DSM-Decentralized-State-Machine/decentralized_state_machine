@@ -3,27 +3,29 @@
 // This module provides functionality to connect to and interact with
 // DSM Storage Nodes for unilateral transactions and DLVs.
 
-use crate::types::error::DsmError;
+use dsm::types::error::DsmError;
 // These imports are conditionally used based on feature flags
-use crate::communication::storage_cache::StorageCache;
-use crate::core::identity::GenesisState;
-use crate::core::identity::Identity;
-use crate::recovery::invalidation::InvalidationMarker;
-use crate::types::operations::Operation;
+use dsm::communication::storage_cache::StorageCache;
+use dsm::core::identity::GenesisState;
+use dsm::core::identity::Identity;
+use dsm::recovery::invalidation::InvalidationMarker;
+use dsm::types::operations::Operation;
 #[cfg(feature = "reqwest")]
-use crate::types::operations::Ops;
-use crate::types::state_types::State;
-use crate::types::token_types::Token;
-use crate::vault::{LimboVault, VaultStatus};
+use dsm::types::operations::Ops;
+use dsm::types::state_types::State;
+use dsm::types::token_types::Token;
+use dsm::vault::{LimboVault, VaultStatus};
 #[cfg(feature = "reqwest")]
-use crate::vault::{VaultState, FulfillmentProof};
+use dsm::vault::{VaultState, FulfillmentProof};
 #[cfg(feature = "reqwest")]
 // LimboVault is used directly from the re-export
-use crate::InboxEntry;
+use dsm::InboxEntry;
 #[cfg(not(feature = "reqwest"))]
-use crate::InboxEntry;
+use dsm::InboxEntry;
 #[allow(unused_imports)]
-use crate::vault::DeterministicLimboVault;
+use dsm::vault::DeterministicLimboVault;
+#[allow(unused_imports)]
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +33,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use url::Url;
+
+// Add reqwest feature to Cargo.toml if not already present
 
 // Using the constant in the StorageNodeClient::new implementation
 // This makes sure the constant is used
@@ -60,22 +64,18 @@ pub struct StorageNodeClient {
 
     /// Base URL of the storage node
     /// Contains the target endpoint for all API requests
-    #[allow(dead_code)]
     base_url: Url,
 
     /// API token for authentication
     /// Used for authenticated requests to protected endpoints
-    #[allow(dead_code)]
     api_token: Option<String>,
 
     /// Cache of recently accessed inbox entries
     /// Provides performance optimization for frequent inbox queries
-    #[allow(dead_code)]
     inbox_cache: RwLock<HashMap<String, Vec<InboxEntry>>>,
 
     /// Cache of recently accessed vaults
     /// Reduces network load for vault operations
-    #[allow(dead_code)]
     vault_cache: RwLock<HashMap<String, LimboVault>>,
 
     /// Advanced cache for persistent offline operation
@@ -87,7 +87,6 @@ pub struct StorageNodeClient {
 
 /// Storage node client with minimal functionality when reqwest is disabled
 #[cfg(not(feature = "reqwest"))]
-#[allow(dead_code)]
 pub struct StorageNodeClient {
     /// Base URL of the storage node
     base_url: Url,
@@ -121,10 +120,12 @@ impl StorageNodeClient {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .build()
-            .map_err(|e| DsmError::Network {
-                context: format!("Failed to create HTTP client: {}", e),
-                source: Some(Box::new(e)),
-            })?;
+        .map_err(|e| DsmError::Network {
+            entity: "http_client".to_string(),
+            details: Some("Client initialization failed".to_string()),
+            context: format!("Failed to create HTTP client: {}", e),
+            source: Some(Box::new(e)),
+        })?;
 
         let base_url = Url::parse(&config.base_url).map_err(|e| DsmError::Validation {
             context: format!("Invalid base URL: {}", e),
@@ -151,7 +152,7 @@ impl StorageNodeClient {
     ///
     /// # Returns
     /// * `Result<Self, DsmError>` - The initialized client or an error
-    pub fn with_cache(
+    pub fn new_with_cache(
         config: StorageNodeClientConfig,
         storage_cache: Arc<StorageCache>,
         auto_cache: bool,
@@ -160,13 +161,15 @@ impl StorageNodeClient {
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .build()
             .map_err(|e| DsmError::Network {
+                entity: "http_client".to_string(),
+                details: Some("Client initialization failed".to_string()),
                 context: format!("Failed to create HTTP client: {}", e),
-                source: Some(Box::new(e)),
+                source: Some(Box::new(e))
             })?;
 
         let base_url = Url::parse(&config.base_url).map_err(|e| DsmError::Validation {
             context: format!("Invalid base URL: {}", e),
-            source: Some(Box::new(e)),
+            source: Some(Box::new(e)), 
         })?;
 
         Ok(Self {
@@ -189,6 +192,8 @@ impl StorageNodeClient {
             .base_url
             .join("health")
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -198,10 +203,12 @@ impl StorageNodeClient {
             .get(url)
             .send()
             .await
-            .map_err(|e| DsmError::Network {
-                context: format!("Failed to send request: {}", e),
-                source: Some(Box::new(e)),
-            })?;
+        .map_err(|e| DsmError::Network {
+            entity: "storage_client".to_string(),
+            details: Some("Network operation failed".to_string()),
+            context: format!("Failed to send request: {}", e),
+            source: Some(Box::new(e)),
+        })?;
 
         Ok(response.status().is_success())
     }
@@ -212,6 +219,22 @@ impl StorageNodeClient {
     /// * `Arc<StorageCache>` - Reference to the shared storage cache
     pub fn get_storage_cache(&self) -> Arc<StorageCache> {
         self.storage_cache.clone()
+    }
+
+    /// Get the base URL of the storage node
+    ///
+    /// # Returns
+    /// * `String` - The base URL as a string
+    pub fn get_base_url(&self) -> String {
+        self.base_url.to_string()
+    }
+
+    /// Get the API token if available
+    ///
+    /// # Returns
+    /// * `Option<String>` - The API token if set
+    pub fn get_api_token(&self) -> Option<String> {
+        self.api_token.clone()
     }
 
     /// Enable or disable automatic caching of retrieved data
@@ -287,6 +310,8 @@ impl StorageNodeClient {
 
         // Post to storage node
         let url = self.base_url.join("inbox").map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to create URL: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -302,12 +327,16 @@ impl StorageNodeClient {
             .send()
             .await
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to send request: {}", e),
                 source: Some(Box::new(e)),
             })?;
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -340,6 +369,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("genesis/{}", hash_hex))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -351,6 +382,8 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -361,6 +394,8 @@ impl StorageNodeClient {
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -368,12 +403,16 @@ impl StorageNodeClient {
 
         // Parse response with proper error handling
         let genesis_bytes = &response.bytes().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to read response: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         let genesis: GenesisState =
             bincode::deserialize(genesis_bytes).map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to deserialize genesis state: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -410,6 +449,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("token/{}", token_id))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -421,6 +462,8 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -431,6 +474,8 @@ impl StorageNodeClient {
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -438,12 +483,16 @@ impl StorageNodeClient {
 
         // Parse response
         let token_bytes = &response.bytes().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to read response: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         let token: Token =
             bincode::deserialize(token_bytes).map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to deserialize token: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -475,6 +524,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("checkpoint/{}", checkpoint_id))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -486,6 +537,8 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -496,6 +549,8 @@ impl StorageNodeClient {
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -503,12 +558,16 @@ impl StorageNodeClient {
 
         // Parse response with careful deserialization
         let checkpoint_bytes = &response.bytes().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to read response: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         let checkpoint: State =
             bincode::deserialize(checkpoint_bytes).map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to deserialize checkpoint: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -551,6 +610,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("invalidation/{}", hash_hex))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -562,6 +623,8 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -572,6 +635,8 @@ impl StorageNodeClient {
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -579,12 +644,16 @@ impl StorageNodeClient {
 
         // Parse response
         let marker_bytes = &response.bytes().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to read response: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         let marker: InvalidationMarker =
             bincode::deserialize(marker_bytes).map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to deserialize invalidation marker: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -655,6 +724,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("inbox/{}", recipient_genesis_hash))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -666,12 +737,16 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -679,6 +754,8 @@ impl StorageNodeClient {
 
         let entries: Vec<serde_json::Value> =
             response.json().await.map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to parse response: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -689,6 +766,8 @@ impl StorageNodeClient {
             let operation_bytes = entry_json["operation"]
                 .as_array()
                 .ok_or_else(|| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                     context: "Missing operation bytes".into(),
                     source: None,
                 })?
@@ -699,6 +778,8 @@ impl StorageNodeClient {
             let signature_bytes = entry_json["signature"]
                 .as_array()
                 .ok_or_else(|| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                     context: "Missing signature bytes".into(),
                     source: None,
                 })?
@@ -708,6 +789,8 @@ impl StorageNodeClient {
 
             let _operation: Operation =
                 bincode::deserialize(&operation_bytes).map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                     context: format!("Failed to deserialize operation: {}", e),
                     source: Some(Box::new(e)),
                 })?;
@@ -775,6 +858,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("inbox/{}/{}", recipient_genesis_hash, entry_id))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -786,12 +871,16 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -848,6 +937,8 @@ impl StorageNodeClient {
 
         // Post to storage node
         let url = self.base_url.join("vault").map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to create URL: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -863,12 +954,16 @@ impl StorageNodeClient {
             .send()
             .await
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to send request: {}", e),
                 source: Some(Box::new(e)),
             })?;
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -907,6 +1002,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("vault/{}", vault_id))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -918,6 +1015,8 @@ impl StorageNodeClient {
         }
 
         let response = builder.send().await.map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
             context: format!("Failed to send request: {}", e),
             source: Some(Box::new(e)),
         })?;
@@ -928,6 +1027,8 @@ impl StorageNodeClient {
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -936,6 +1037,8 @@ impl StorageNodeClient {
         // Parse vault information with proper JSON validation
         let vault_json: serde_json::Value =
             response.json().await.map_err(|e| DsmError::Serialization {
+                entity: "serialized_data".to_string(),
+                details: Some("Serialization operation failed".to_string()),
                 context: format!("Failed to parse response: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -1003,7 +1106,7 @@ impl StorageNodeClient {
         let created_at_state = vault_json["created_at_state"].as_u64().unwrap_or(0);
 
         // In a real implementation, we'd extract actual encrypted content
-        let encrypted_content = crate::vault::EncryptedContent {
+        let encrypted_content = dsm::vault::EncryptedContent {
             encapsulated_key: Vec::new(),
             encrypted_data: Vec::new(),
             nonce: Vec::new(),
@@ -1011,7 +1114,7 @@ impl StorageNodeClient {
         };
 
         // Use a default Pedersen commitment for now
-        use crate::crypto::pedersen::PedersenCommitment;
+        use dsm::crypto::pedersen::PedersenCommitment;
 
         // Create the vault structure with available fields
         // This is a very simplified version that wouldn't work in production
@@ -1020,7 +1123,7 @@ impl StorageNodeClient {
             created_at_state,
             creator_public_key,
             // This would need to be properly extracted in a real implementation
-            fulfillment_condition: crate::vault::FulfillmentMechanism::TimeRelease {
+            fulfillment_condition: dsm::vault::FulfillmentMechanism::TimeRelease {
                 unlock_time: 0,
                 reference_states: Vec::new(),
             },
@@ -1093,6 +1196,8 @@ impl StorageNodeClient {
             .base_url
             .join(&format!("vault/{}/status", vault_id))
             .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Failed to create URL: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -1109,12 +1214,16 @@ impl StorageNodeClient {
                 .send()
                 .await
                 .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                     context: format!("Failed to send request: {}", e),
                     source: Some(Box::new(e)),
                 })?;
 
         if !response.status().is_success() {
             return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
                 context: format!("Storage node returned error: {}", response.status()),
                 source: None,
             });
@@ -1150,6 +1259,62 @@ impl StorageNodeClient {
             }
         }
 
+        Ok(())
+    }
+    
+    /// Notify a storage node about an entropy contribution
+    pub async fn notify_entropy_contribution(
+        &self,
+        process_id: &str,
+        participant_id: &str,
+        entropy: Vec<u8>,
+    ) -> Result<(), DsmError> {
+        // Create the notification payload
+        let payload = serde_json::json!({
+            "process_id": process_id,
+            "participant_id": participant_id,
+            "entropy": base64::engine::general_purpose::STANDARD.encode(&entropy),
+            "timestamp": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+        
+        // Send to the storage node
+        let url = self.base_url.join(&format!("mpc/{}/entropy", process_id))
+            .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
+                context: format!("Failed to create URL: {}", e),
+                source: Some(Box::new(e)),
+            })?;
+            
+        let mut builder = self.http_client.post(url);
+        
+        if let Some(token) = &self.api_token {
+            builder = builder.header("Authorization", format!("Bearer {}", token));
+        }
+        
+        let response = builder
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
+                context: format!("Failed to send entropy contribution: {}", e),
+                source: Some(Box::new(e)),
+            })?;
+            
+        if !response.status().is_success() {
+            return Err(DsmError::Network {
+                entity: "storage_client".to_string(),
+                details: Some("Network operation failed".to_string()),
+                context: format!("Storage node returned error: {}", response.status()),
+                source: None,
+            });
+        }
+        
         Ok(())
     }
 }
@@ -1207,7 +1372,8 @@ impl StorageNodeClient {
 
     /// Check if storage node is healthy (always returns error when reqwest is disabled)
     pub async fn check_health(&self) -> Result<bool, DsmError> {
-        Err(DsmError::feature_not_available(
+        Err(DsmError::Feature {
+            context: 
             "Network functionality requires the 'reqwest' feature",
             None::<String>,
         ))
@@ -1325,6 +1491,19 @@ impl StorageNodeClient {
         &self,
         _vault_id: &str,
         _new_status: VaultStatus,
+    ) -> Result<(), DsmError> {
+        Err(DsmError::feature_not_available(
+            "Network functionality requires the 'reqwest' feature",
+            None::<String>,
+        ))
+    }
+    
+    /// Notify a storage node about an entropy contribution (not available without reqwest)
+    pub async fn notify_entropy_contribution(
+        &self,
+        _process_id: &str,
+        _participant_id: &str,
+        _entropy: Vec<u8>,
     ) -> Result<(), DsmError> {
         Err(DsmError::feature_not_available(
             "Network functionality requires the 'reqwest' feature",

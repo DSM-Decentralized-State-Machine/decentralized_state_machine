@@ -23,7 +23,8 @@ pub mod transition;
 pub mod transition_fix;
 pub mod transition_fix_test;
 pub mod utils;
-pub mod validation; // New centralized utility module
+pub mod validation;
+pub mod genesis; // Centralized utility module
 
 pub use crate::core::state_machine::checkpoint::Checkpoint;
 use crate::core::state_machine::relationship::validate_relationship_state_transition;

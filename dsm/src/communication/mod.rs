@@ -6,7 +6,6 @@ pub mod nfc;
 pub mod p2p;
 pub mod protocol;
 pub mod storage_cache;
-pub mod storage_client;
 pub mod transport;
 
 use crate::types::error::DsmError;
@@ -148,5 +147,4 @@ pub fn generate_ca_cert() -> Result<Certificate, rcgen::Error> {
 pub use self::manager::{ConnectionManager, NetworkManager};
 pub use self::protocol::{Message, Protocol, Session};
 pub use self::storage_cache::StorageCache;
-pub use self::storage_client::{StorageNodeClient, StorageNodeClientConfig};
 pub use self::transport::{Transport, TransportConnection, TransportListener};

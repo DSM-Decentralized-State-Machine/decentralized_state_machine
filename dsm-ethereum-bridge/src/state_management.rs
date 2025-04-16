@@ -98,6 +98,8 @@ impl PersistentStateManager {
         let state_bytes = bincode::serialize(&state).map_err(|e| DsmError::Serialization {
             context: "Failed to serialize DSM state".into(),
             source: Some(Box::new(e)),
+            entity: "state_id".into(),
+            details: Some("Failed to serialize DSM state".into()),
         })?;
 
         // Store the state in RocksDB
@@ -141,6 +143,8 @@ impl PersistentStateManager {
                     DsmError::Serialization {
                         context: "Failed to parse latest state key".into(),
                         source: Some(Box::new(e)),
+                        entity: "latest_state_key".into(),
+                        details: None,
                     }
                 })?;
 
@@ -177,6 +181,8 @@ impl PersistentStateManager {
                     std::str::from_utf8(&state_ids_bytes).map_err(|e| DsmError::Serialization {
                         context: "Failed to parse state IDs".into(),
                         source: Some(Box::new(e)),
+                        entity: "state_ids".into(),
+                        details: None,
                     })?;
 
                 // Split the comma-separated IDs
@@ -217,6 +223,8 @@ impl PersistentStateManager {
                     std::str::from_utf8(&state_id_bytes).map_err(|e| DsmError::Serialization {
                         context: "Failed to parse state ID".into(),
                         source: Some(Box::new(e)),
+                        details: Some("Unable to convert bytes to UTF-8 string".to_string()),
+                        entity: "state_id".into(),
                     })?;
 
                 // Load the state
@@ -246,6 +254,8 @@ impl PersistentStateManager {
                     bincode::deserialize(&state_bytes).map_err(|e| DsmError::Serialization {
                         context: "Failed to deserialize DSM state".into(),
                         source: Some(Box::new(e)),
+                        entity: "state_id".into(),
+                        details: Some("Unable to convert bytes to UTF-8 string".to_string()),
                     })?;
 
                 // Update cache
@@ -321,6 +331,8 @@ impl PersistentStateManager {
                 std::str::from_utf8(&existing_bytes).map_err(|e| DsmError::Serialization {
                     context: "Failed to parse existing state IDs".into(),
                     source: Some(Box::new(e)),
+                    entity: "state_ids".into(),
+                    details: Some("Failed to parse existing state IDs".to_string()),
                 })?;
 
             let mut ids: Vec<String> = existing_str.split(',').map(|s| s.to_string()).collect();

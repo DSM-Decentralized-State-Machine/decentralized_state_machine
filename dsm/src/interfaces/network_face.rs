@@ -183,6 +183,8 @@ impl NetworkManager {
                     Err(DsmError::Network {
                         context: "Bluetooth transport not configured".into(),
                         source: None,
+                        entity: "bluetooth".to_string(),
+                        details: Some("Transport not initialized".to_string()),
                     })
                 }
             }
@@ -191,6 +193,8 @@ impl NetworkManager {
                 Err(DsmError::Network {
                     context: "HTTPS transport not yet implemented".into(),
                     source: None,
+                    entity: "internet".to_string(),
+                    details: Some("Implementation pending".to_string()),
                 })
             }
             #[allow(unreachable_patterns)]
@@ -199,6 +203,8 @@ impl NetworkManager {
                 Err(DsmError::Network {
                     context: "Unsupported transport protocol".into(),
                     source: None,
+                    entity: "transport".to_string(),
+                    details: Some("Protocol not supported".to_string()),
                 })
             }
         }
@@ -325,6 +331,8 @@ impl NetworkInterface for BluetoothNetwork {
             return Err(DsmError::Network {
                 context: "Not connected to Bluetooth network".into(),
                 source: None,
+                entity: "bluetooth".to_string(),
+                details: Some("Connection required".to_string()),
             });
         }
 
@@ -332,6 +340,8 @@ impl NetworkInterface for BluetoothNetwork {
             return Err(DsmError::Network {
                 context: format!("Unknown Bluetooth peer: {}", peer_id),
                 source: None,
+                entity: "bluetooth_peer".to_string(),
+                details: Some(peer_id.to_string()),
             });
         }
 
@@ -341,25 +351,6 @@ impl NetworkInterface for BluetoothNetwork {
             peer_id
         );
         Ok(())
-    }
-
-    async fn receive(&self) -> Result<(String, Vec<u8>), DsmError> {
-        if !self.connected {
-            return Err(DsmError::Network {
-                context: "Not connected to Bluetooth network".into(),
-                source: None,
-            });
-        }
-
-        // Simulate receiving from the first peer in our list
-        if let Some((peer_id, _)) = self.peers.iter().next() {
-            return Ok((peer_id.clone(), b"Bluetooth received data".to_vec()));
-        }
-
-        Err(DsmError::Network {
-            context: "No Bluetooth peers available".into(),
-            source: None,
-        })
     }
 
     async fn publish(&self, key: &str, data: &[u8]) -> Result<(), DsmError> {
@@ -374,6 +365,30 @@ impl NetworkInterface for BluetoothNetwork {
 
     async fn is_peer_online(&self, peer_id: &str) -> Result<bool, DsmError> {
         Ok(self.connected && self.peers.contains_key(peer_id))
+    }
+
+    async fn receive(&self) -> Result<(String, Vec<u8>), DsmError> {
+        if !self.connected {
+            return Err(DsmError::Network {
+                context: "Not connected to Bluetooth network".into(),
+                source: None,
+                entity: "bluetooth".to_string(),
+                details: Some("Connection required".to_string()),
+            });
+        }
+
+        // Simulate receiving data from first available peer
+        if let Some(peer_id) = self.peers.keys().next() {
+            println!("Receiving data via Bluetooth from peer {}", peer_id);
+            Ok((peer_id.clone(), Vec::new()))
+        } else {
+            Err(DsmError::Network {
+                context: "No peers available".into(),
+                source: None,
+                entity: "bluetooth".to_string(),
+                details: None,
+            })
+        }
     }
 }
 

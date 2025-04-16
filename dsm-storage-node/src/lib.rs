@@ -13,3 +13,4 @@ pub mod node_management;
 pub mod staking;
 pub mod storage;
 pub mod types;
+pub mod client;

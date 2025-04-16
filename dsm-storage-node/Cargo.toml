@@ -7,6 +7,7 @@ description = "Storage node for the Decentralized State Machine (DSM)"
 
 [dependencies]
 dsm = { path = "../dsm" }
+url = "2.4.1"
 tokio = { version = "1.32.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
@@ -24,6 +25,8 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 axum = { version = "0.6.20", features = ["macros"] }
 reqwest = { version = "0.11.20", features = ["json"] }
+
+
 rusqlite = { version = "0.29.0", features = ["bundled"] }
 zeroize = "1.6.0"
 base64 = "0.21.4"
@@ -45,3 +48,6 @@ hex = "0.4.3"
 sysinfo = "0.30" # Or the latest compatible version
 anyhow = "1.0.75"
 
+[features]
+default = ["reqwest"]
+reqwest = []
