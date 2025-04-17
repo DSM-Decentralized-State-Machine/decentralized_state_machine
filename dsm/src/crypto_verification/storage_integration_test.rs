@@ -304,39 +304,20 @@ mod tests {
         assert!(verified, "Signature verification failed");
         println!("Signature verification successful");
         
-        // Cleanup - delete the states from storage
-        println!("Cleaning up test data from storage node...");
-        let delete_response = client.delete(format!("http://127.0.0.1:8080/api/v1/data/{}", identity_key))
-            .send()
-            .await
-            .map_err(|e: reqwest::Error| DsmError::Network {
-                context: format!("Failed to delete genesis state from storage node: {}", e),
-                source: Some(Box::new(e)),
-                entity: "storage_node".to_string(),
-                details: Some("Error during cleanup".to_string())
-            })?;
-            
-        if !delete_response.status().is_success() {
-            println!("Warning: Failed to delete genesis state: HTTP {}", delete_response.status());
-        } else {
-            println!("Successfully deleted genesis state from storage node");
-        }
+        // Skip deletion to allow inspection of the stored states
+        println!("\nKeeping test data in storage node for inspection");
+        println!("You can access the genesis state at: http://127.0.0.1:8080/api/v1/data/{}", identity_key);
+        println!("You can access the next state at: http://127.0.0.1:8080/api/v1/data/{}", next_state_key);
         
-        let next_delete_response = client.delete(format!("http://127.0.0.1:8080/api/v1/data/{}", next_state_key))
-            .send()
-            .await
-            .map_err(|e: reqwest::Error| DsmError::Network {
-                context: format!("Failed to delete next state from storage node: {}", e),
-                source: Some(Box::new(e)),
-                entity: "storage_node".to_string(),
-                details: Some("Error during cleanup of state 1".to_string())
-            })?;
-            
-        if !next_delete_response.status().is_success() {
-            println!("Warning: Failed to delete next state: HTTP {}", next_delete_response.status());
-        } else {
-            println!("Successfully deleted next state from storage node");
-        }
+        // Print keys for easy reference
+        println!("\nStored keys:");
+        println!("  Genesis state key: {}", identity_key);
+        println!("  Next state key: {}", next_state_key);
+        
+        // To manually delete these states later, you can use:
+        println!("\nTo delete these states later, use these curl commands:");
+        println!("  curl -X DELETE http://127.0.0.1:8080/api/v1/data/{}", identity_key);
+        println!("  curl -X DELETE http://127.0.0.1:8080/api/v1/data/{}", next_state_key);
             
         println!("Storage integration test completed successfully");
         Ok(())
