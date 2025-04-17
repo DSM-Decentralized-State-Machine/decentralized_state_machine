@@ -12,6 +12,8 @@ pub mod cryptographic_identity;
 pub mod deterministic_verification;
 pub mod multiparty_computation;
 pub mod quantum_resistant_binding;
+#[cfg(test)]
+mod storage_integration_test;
 
 // Re-export core components for easier access
 pub use cryptographic_identity::CryptoIdentity;

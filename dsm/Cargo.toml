@@ -252,3 +252,12 @@ path = "bin/cli.rs"
 [[bin]]
 name = "server"
 path = "bin/server.rs"
+
+# Genesis examples
+[[example]]
+name = "start_storage_nodes"
+path = "examples/start_storage_nodes.rs"
+
+[[example]]
+name = "user_genesis_creation"
+path = "examples/user_genesis_creation.rs"
