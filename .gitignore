@@ -43,6 +43,7 @@ dsm/output.txt
 data.bin
 *.db
 dsm/data/commitments/*
+storage.db
 
 # Monitoring data
 monitoring/grafana/data/
