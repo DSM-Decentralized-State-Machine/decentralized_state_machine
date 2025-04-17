@@ -11,8 +11,6 @@ use axum::{
 use tower_http::{
     trace::TraceLayer,
     cors::{CorsLayer, Any},
-    // CompressionLayer is not available in the compatible version
-    // compression::CompressionLayer,
 };
 use tokio::sync::mpsc;
 use tracing::{info, error, debug};
@@ -44,7 +42,7 @@ pub struct AppState {
 
 /// Start the API server
 pub async fn start_api_server(
-    listen_addr: String,
+    listen_addr: String, 
     store: SnapshotStore,
     config: SnapshotConfig,
 ) -> Result<()> {
@@ -77,32 +75,26 @@ pub async fn start_api_server(
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
-    // Build router
+    // Build router with transparent endpoints only
     let app = Router::new()
         // Public endpoints
         .route("/health", get(handlers::health_check))
         .route("/stats", get(handlers::get_stats))
         .route("/", get(handlers::index))
-        // IP collection endpoints (passive - extracts real client IPs transparently)
-        .route("/api/ping", get(handlers::passive_collect))
-        .route("/api/beacon", get(handlers::passive_collect))
-        .route("/api/status", get(handlers::passive_collect))
-        .route("/api/metrics", get(handlers::passive_collect))
+        // Transparent collection endpoints
+        .route("/api/submit", post(handlers::submit_ip))
         // Admin endpoints (protected by token)
         .route("/admin/start", post(handlers::start_collection))
         .route("/admin/stop", post(handlers::stop_collection))
         .route("/admin/snapshot", post(handlers::create_snapshot))
         .route("/admin/snapshots", get(handlers::list_snapshots))
         .route("/admin/clear", post(handlers::clear_data))
-        // Export endpoints (protected by token)
         .route("/admin/export/json", get(handlers::export_json))
         .route("/admin/export/csv", get(handlers::export_csv))
         .route("/admin/export/hash", get(handlers::export_hash))
         // Middleware
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        // CompressionLayer removed as it's not available in the compatible version
-        // .layer(CompressionLayer::new())
         .layer(middleware::extract_real_ip_layer())
         .with_state(state);
 
