@@ -1,4 +1,3 @@
-// filepath: /Users/cryptskii/Desktop/claude_workspace/DSM_Decentralized_State_Machine/ip-snapshot/src/ip_collector/mod.rs
 //! Module for IP address collection functionality
 
 use std::net::IpAddr;
@@ -42,7 +41,7 @@ pub enum CollectorCommand {
         /// Geo information
         geo_info: GeoInformation,
         /// Timestamp of collection
-        _timestamp: DateTime<Utc>, // The collection timestamp
+        _timestamp: DateTime<Utc>,
     },
     
     /// Start IP collection
@@ -65,15 +64,13 @@ pub enum CollectorCommand {
     /// Clear all collected data
     Clear,
     
-    /// Start geographic scanning for IPs
+    /// Start passive IP collection
     StartScanning {
         /// Concurrency level
         concurrency: Option<usize>,
-        /// Regional weights
-        region_weights: Option<Vec<(String, usize)>>,
     },
     
-    /// Stop geographic scanning
+    /// Stop IP collection
     StopScanning,
 }
 
@@ -187,8 +184,8 @@ impl IpCollector {
                     self.handle_create_snapshot(id, description).await;
                 },
                 
-                CollectorCommand::StartScanning { concurrency, region_weights } => {
-                    self.handle_start_scanning(concurrency, region_weights).await;
+                CollectorCommand::StartScanning { concurrency } => {
+                    self.handle_start_scanning(concurrency).await;
                 },
                 
                 CollectorCommand::StopScanning => {
@@ -228,7 +225,7 @@ impl IpCollector {
         if let Some(ua) = user_agent {
             entry.network.user_agents.push(ua);
         }
-        
+
         // Store entry
         if let Err(e) = self.store.add_ip_entry(entry).await {
             error!("Failed to store IP entry: {}", e);
@@ -278,8 +275,7 @@ impl IpCollector {
             flagged_ip_count: 0,
             top_countries: HashMap::new(),
             collection_params: format!("Standard collection with ID: {}", id),
-            data_hash: String::new(), // Will be calculated by the store
-            verification_nonce: uuid::Uuid::new_v4().to_string(),
+            data_hash: uuid::Uuid::new_v4().to_string(),
         };
         
         // Create snapshot
@@ -297,44 +293,42 @@ impl IpCollector {
     async fn handle_start_scanning(
         &mut self,
         concurrency: Option<usize>,
-        region_weights: Option<Vec<(String, usize)>>,
     ) {
         // Don't start if already scanning
         if self.scanning {
-            info!("Geographic IP scanning already running");
+            info!("Passive IP collection already running");
             return;
         }
         
-        // Create scanner configuration
-        let mut config = scanner::ScannerConfig::default();
+        // Create scanner configuration, using values from config if available
+        let mut scanner_config = scanner::ScannerConfig {
+            concurrency: self.config.scan_config.concurrency,
+            batch_delay_ms: self.config.scan_config.batch_delay_ms,
+            regional_scanning: self.config.scan_config.regional_scanning,
+            scan_ipv6: self.config.scan_config.scan_ipv6,
+            ip_ranges: self.config.scan_config.ip_ranges.clone(),
+        };
         
-        // Apply custom concurrency if provided
+        // Override with command-line concurrency if provided
         if let Some(concurrency) = concurrency {
-            config.concurrency = concurrency;
-        }
-        
-        // Apply custom region weights if provided
-        if let Some(weights) = region_weights {
-            for (region, weight) in weights {
-                config.region_weights.insert(region, weight);
-            }
+            scanner_config.concurrency = concurrency;
         }
         
         // Capture concurrency value before moving config
-        let concurrency_value = config.concurrency;
+        let concurrency_value = scanner_config.concurrency;
 
         // Create and start scanner
         match scanner::IpScanner::new(
             Arc::clone(&self.geo_service),
             self.command_tx.clone(),
-            Some(config),
+            Some(scanner_config),
         ).await {
             Ok(scanner) => {
                 let scanner = Arc::new(scanner);
                 
-                // Start scanning
-                if let Err(e) = scanner.start_scanning().await {
-                    error!("Failed to start geographic scanner: {}", e);
+                // Start collection
+                if let Err(e) = scanner.start_collection().await {
+                    error!("Failed to start IP collection: {}", e);
                     return;
                 }
                 
@@ -342,19 +336,26 @@ impl IpCollector {
                 self.scanner = Some(scanner);
                 self.scanning = true;
                 
-                info!("Geographic IP scanning started with concurrency {}", concurrency_value);
+                info!("Passive IP collection started with concurrency {}. Collecting from all global regions with even distribution.", concurrency_value);
             }
             Err(e) => {
-                error!("Failed to create geographic scanner: {}", e);
+                error!("Failed to create IP scanner: {}", e);
             }
         }
     }
     
     /// Handle stopping geographic scanning
     async fn handle_stop_scanning(&mut self) {
-        self.scanning = false;
-        self.scanner = None;
-        info!("Geographic IP scanning stopped");
+        if let Some(scanner) = &self.scanner {
+            if let Err(e) = scanner.stop_collection().await {
+                error!("Error stopping scanner: {}", e);
+            }
+            self.scanning = false;
+            self.scanner = None;
+            info!("Geographic IP scanning stopped");
+        } else {
+            info!("No active scanner to stop");
+        }
     }
     
     /// Handle getting collection statistics

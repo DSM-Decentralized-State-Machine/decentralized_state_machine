@@ -132,6 +132,20 @@ impl From<ExportError> for SnapshotError {
     }
 }
 
+// Add From implementation for tokio channel send errors
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for SnapshotError {
+    fn from(error: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        SnapshotError::Internal(format!("Failed to send message: {}", error))
+    }
+}
+
+// Add From implementation for tokio semaphore errors
+impl From<tokio::sync::AcquireError> for SnapshotError {
+    fn from(error: tokio::sync::AcquireError) -> Self {
+        SnapshotError::Internal(format!("Failed to acquire semaphore: {}", error))
+    }
+}
+
 /// Result type alias
 pub type Result<T> = std::result::Result<T, SnapshotError>;
 

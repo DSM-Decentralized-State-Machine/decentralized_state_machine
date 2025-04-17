@@ -32,4 +32,15 @@ curl -v -X DELETE $STORAGE_URL/api/v1/data/$TEST_ID
 echo -e "\n--- Step 5: Verifying deletion (should return 404) ---"
 curl -s -w "\nHTTP Status Code: %{http_code}\n" $STORAGE_URL/api/v1/data/$TEST_ID
 
+# Step 6: Test network analysis
+echo -e "\n--- Step 6: Testing network analysis ---"
+# Test with known datacenter IP
+curl -s -X POST -H "Content-Type: application/json" -d '{"ip":"16.0.0.1"}' "$STORAGE_URL/api/v1/analyze/ip" | jq .
+
+# Test with known VPN IP
+curl -s -X POST -H "Content-Type: application/json" -d '{"ip":"42.70.8.1"}' "$STORAGE_URL/api/v1/analyze/ip" | jq .
+
+# Test with regular IP
+curl -s -X POST -H "Content-Type: application/json" -d '{"ip":"8.8.8.8"}' "$STORAGE_URL/api/v1/analyze/ip" | jq .
+
 echo -e "\nTest completed!"

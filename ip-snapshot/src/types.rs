@@ -26,13 +26,8 @@ pub struct IpEntry {
     /// Network attributes
     pub network: NetworkInformation,
 
-    /// Fraud detection score (0-100)
-    /// Higher score indicates higher probability of being legitimate
+    /// Legitimacy score (0-100) - this is now a simple placeholder
     pub legitimacy_score: u8,
-
-    /// BLAKE3 verification hash of this entry
-    /// Comprises all fields above deterministically serialized and hashed
-    pub verification_hash: String,
 }
 
 impl IpEntry {
@@ -40,7 +35,7 @@ impl IpEntry {
     pub fn new(ip: IpAddr) -> Self {
         let now = Utc::now();
 
-        let mut entry = Self {
+        Self {
             ip,
             first_seen: now,
             last_seen: now,
@@ -48,13 +43,7 @@ impl IpEntry {
             geo: None,
             network: NetworkInformation::default(),
             legitimacy_score: 50, // Neutral initial score
-            verification_hash: String::new(),
-        };
-
-        // Generate verification hash
-        entry.update_verification_hash();
-
-        entry
+        }
     }
 
     /// Update the entry with a new connection
@@ -62,82 +51,24 @@ impl IpEntry {
     pub fn record_connection(&mut self) {
         self.last_seen = Utc::now();
         self.connection_count += 1;
-        self.update_verification_hash();
     }
 
     /// Set geolocation information
     #[allow(dead_code)]
     pub fn set_geo(&mut self, geo: GeoInformation) {
         self.geo = Some(geo);
-        self.update_verification_hash();
     }
 
     /// Update network information
     #[allow(dead_code)]
     pub fn set_network(&mut self, network: NetworkInformation) {
         self.network = network;
-        self.update_verification_hash();
     }
 
     /// Set legitimacy score
     #[allow(dead_code)]
     pub fn set_legitimacy_score(&mut self, score: u8) {
         self.legitimacy_score = score;
-        self.update_verification_hash();
-    }
-
-    /// Update verification hash
-    pub fn update_verification_hash(&mut self) {
-        let serialized = serde_json::json!({
-            "ip": self.ip.to_string(),
-            "first_seen": self.first_seen,
-            "last_seen": self.last_seen,
-            "connection_count": self.connection_count,
-            "geo": self.geo,
-            "network": self.network,
-            "legitimacy_score": self.legitimacy_score,
-        });
-
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(serialized.to_string().as_bytes());
-        self.verification_hash = hex::encode(hasher.finalize().as_bytes());
-    }
-
-    /// Verify integrity of this entry
-    pub fn verify_integrity(&self) -> bool {
-        let serialized = serde_json::json!({
-            "ip": self.ip.to_string(),
-            "first_seen": self.first_seen,
-            "last_seen": self.last_seen,
-            "connection_count": self.connection_count,
-            "geo": self.geo,
-            "network": self.network,
-            "legitimacy_score": self.legitimacy_score,
-        });
-
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(serialized.to_string().as_bytes());
-        let computed_hash = hex::encode(hasher.finalize().as_bytes());
-
-        computed_hash == self.verification_hash
-    }
-
-    /// Canonicalize the entry into a consistent byte representation for hashing
-    #[allow(dead_code)]
-    pub fn canonicalize(&self) -> Result<Vec<u8>, serde_json::Error> {
-        // Create a simplified representation without the verification_hash
-        let canonical = serde_json::json!({
-            "ip": self.ip.to_string(),
-            "first_seen": self.first_seen.to_rfc3339(),
-            "last_seen": self.last_seen.to_rfc3339(),
-            "connection_count": self.connection_count,
-            "geo": self.geo,
-            "network": self.network,
-            "legitimacy_score": self.legitimacy_score
-        });
-
-        // Convert to sorted key representation to ensure consistency
-        serde_json::to_vec(&canonical)
     }
 }
 
@@ -190,6 +121,9 @@ pub struct NetworkInformation {
     
     /// Source of the IP
     pub source: IpSource,
+
+    /// ASN reputation score (0-100)
+    pub asn_reputation_score: Option<u8>,
 }
 
 impl Default for NetworkInformation {
@@ -203,6 +137,7 @@ impl Default for NetworkInformation {
             proxy_headers: HashMap::new(),
             network_range: None,
             source: IpSource::PassiveCollection,
+            asn_reputation_score: None,
         }
     }
 }
@@ -240,11 +175,8 @@ pub struct SnapshotMetadata {
     /// Configuration parameters used for collection
     pub collection_params: String,
 
-    /// BLAKE3 hash of all IP entries
+    /// Simple data identifier
     pub data_hash: String,
-
-    /// Verification nonce for this snapshot
-    pub verification_nonce: String,
 }
 
 /// Verification result
@@ -400,6 +332,7 @@ pub struct ApiResponse<T> {
 
 impl<T> ApiResponse<T> {
     /// Create a successful response
+    #[allow(dead_code)]
     pub fn success(data: T) -> Self {
         Self {
             success: true,
@@ -410,6 +343,7 @@ impl<T> ApiResponse<T> {
     }
 
     /// Create an error response
+    #[allow(dead_code)]
     pub fn error(error: impl Into<String>) -> Self {
         Self {
             success: false,

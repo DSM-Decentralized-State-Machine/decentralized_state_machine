@@ -12,75 +12,36 @@ pub struct SnapshotConfig {
     /// Path to GeoIP database
     pub geoip_path: Option<PathBuf>,
 
-    /// Maximum number of IPs to collect
+    /// Maximum number of IPs to collect (None = unlimited)
     pub max_ips: Option<usize>,
-
-    /// Whether to detect and filter out VPNs/proxies
-    pub detect_proxies: bool,
-
-    /// Rate limit for IP collection per minute
-    pub rate_limit: u32,
-
-    /// List of custom proxy detection providers
-    pub proxy_detection_providers: Vec<ProxyDetectionProvider>,
-
-    /// API key for MaxMind
-    pub maxmind_api_key: Option<String>,
-
-    /// API key for IP Quality Score
-    pub ipqs_api_key: Option<String>,
+    
+    /// Scan configuration
+    pub scan_config: ScanConfig,
 
     /// Output format for exports
     pub export_format: ExportFormat,
-
-    /// Authentication token for API
-    pub api_token: Option<String>,
-
-    /// Whether to collect additional network metrics
-    pub collect_network_metrics: bool,
-
-    /// Whether to encrypt stored data
-    pub encrypt_data: bool,
-
-    /// Maximum collection duration in seconds (0 = unlimited)
-    pub max_duration_seconds: u64,
-
-    /// Snapshot interval in seconds (0 = manual only)
-    pub snapshot_interval_seconds: u64,
-
-    /// Whether to auto-start collection on server start
-    pub auto_start_collection: bool,
-
-    /// Network timeout in seconds
-    pub network_timeout_seconds: u32,
-
-    /// Retry count for network operations
-    pub network_retry_count: u32,
-
-    /// Whether to enable global IP collection limits
-    pub enable_global_limits: bool,
-
-    /// Maximum DB size in bytes
-    pub max_db_size_bytes: Option<u64>,
-
+    
     /// Logging configuration
     pub logging: LoggingConfig,
 }
 
-/// Proxy detection provider
+/// Scanner configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyDetectionProvider {
-    /// Provider name
-    pub name: String,
-
-    /// Provider URL
-    pub url: String,
-
-    /// API key
-    pub api_key: Option<String>,
-
-    /// Whether this provider is enabled
-    pub enabled: bool,
+pub struct ScanConfig {
+    /// Whether to use regional scanning for even global distribution
+    pub regional_scanning: bool,
+    
+    /// Whether to include IPv6 addresses
+    pub scan_ipv6: bool,
+    
+    /// Maximum concurrent scans
+    pub concurrency: usize,
+    
+    /// Delay between scan batches in milliseconds
+    pub batch_delay_ms: u64,
+    
+    /// IP ranges to scan (CIDR format) - empty for default regions
+    pub ip_ranges: Vec<String>,
 }
 
 /// Export format
@@ -122,28 +83,26 @@ pub struct LoggingConfig {
     pub max_files: Option<u32>,
 }
 
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            regional_scanning: true,
+            scan_ipv6: true,
+            concurrency: 250,
+            batch_delay_ms: 2000,
+            ip_ranges: Vec::new(), // Empty means use default residential ranges
+        }
+    }
+}
+
 impl Default for SnapshotConfig {
     fn default() -> Self {
         Self {
             data_dir: PathBuf::from("./data"),
             geoip_path: None,
             max_ips: None,
-            detect_proxies: true,
-            rate_limit: 6000, // 100 per second
-            proxy_detection_providers: Vec::new(),
-            maxmind_api_key: None,
-            ipqs_api_key: None,
+            scan_config: ScanConfig::default(),
             export_format: ExportFormat::Json,
-            api_token: None,
-            collect_network_metrics: true,
-            encrypt_data: false,
-            max_duration_seconds: 0,         // Unlimited
-            snapshot_interval_seconds: 3600, // 1 hour
-            auto_start_collection: false,
-            network_timeout_seconds: 10,
-            network_retry_count: 3,
-            enable_global_limits: true,
-            max_db_size_bytes: Some(10 * 1024 * 1024 * 1024), // 10GB
             logging: LoggingConfig {
                 level: "info".to_string(),
                 console: true,
@@ -215,17 +174,17 @@ impl SnapshotConfig {
     /// Validate config values
     #[allow(dead_code)]
     pub fn validate(&self) -> Result<()> {
-        // Validate rate limit
-        if self.rate_limit == 0 {
+        // Validate scan concurrency
+        if self.scan_config.concurrency == 0 {
             return Err(SnapshotError::Configuration(
-                "Rate limit cannot be zero".to_string(),
+                "Scan concurrency cannot be zero".to_string(),
             ));
         }
 
-        // Validate network timeout
-        if self.network_timeout_seconds == 0 {
+        // Validate batch delay
+        if self.scan_config.batch_delay_ms == 0 {
             return Err(SnapshotError::Configuration(
-                "Network timeout cannot be zero".to_string(),
+                "Batch delay cannot be zero".to_string(),
             ));
         }
 

@@ -1,0 +1,41 @@
+{
+  "export_format": "json",
+  "export_timestamp": "2025-04-17T17:26:38.871441Z",
+  "snapshots": [
+    {
+      "entries_count": 111391,
+      "has_entries": true,
+      "id": "snapshot-1744910796",
+      "metadata": {
+        "collection_params": "Standard collection with ID: snapshot-1744910796",
+        "country_count": 122,
+        "created_at": "2025-04-17T17:26:36.010289Z",
+        "data_hash": "ff584a30-173a-445f-a311-6abe3e9a81a8",
+        "description": "Automatic scan of residential IPs with global distribution",
+        "end_time": "2025-04-17T17:26:36.074211Z",
+        "flagged_ip_count": 0,
+        "id": "snapshot-1744910796",
+        "ip_count": 111391,
+        "start_time": "2025-04-17T17:26:36.010289Z",
+        "top_countries": {
+          "BR": 11004,
+          "CA": 3684,
+          "CN": 13189,
+          "FR": 4373,
+          "GB": 5915,
+          "ID": 4148,
+          "JP": 6709,
+          "KR": 6395,
+          "TN": 8698,
+          "US": 21761
+        }
+      }
+    }
+  ],
+  "stats": {
+    "in_memory_ips": 0,
+    "total_ips": 111391,
+    "total_snapshots": 1,
+    "unique_countries": 10
+  }
+}

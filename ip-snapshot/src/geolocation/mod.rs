@@ -7,5 +7,5 @@
 
 mod geoip_service;
 
-#[allow(unused_imports)]
-pub use geoip_service::GeoIpService;
+// Export the GeoIpService type for use outside this module
+pub use self::geoip_service::GeoIpService;

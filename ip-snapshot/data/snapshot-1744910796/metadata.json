@@ -1,0 +1,24 @@
+{
+  "id": "snapshot-1744910796",
+  "description": "Automatic scan of residential IPs with global distribution",
+  "created_at": "2025-04-17T17:26:36.010289Z",
+  "start_time": "2025-04-17T17:26:36.010289Z",
+  "end_time": "2025-04-17T17:26:36.074211Z",
+  "ip_count": 111391,
+  "country_count": 122,
+  "flagged_ip_count": 0,
+  "top_countries": {
+    "ID": 4148,
+    "CA": 3684,
+    "CN": 13189,
+    "TN": 8698,
+    "US": 21761,
+    "KR": 6395,
+    "GB": 5915,
+    "BR": 11004,
+    "FR": 4373,
+    "JP": 6709
+  },
+  "collection_params": "Standard collection with ID: snapshot-1744910796",
+  "data_hash": "ff584a30-173a-445f-a311-6abe3e9a81a8"
+}
