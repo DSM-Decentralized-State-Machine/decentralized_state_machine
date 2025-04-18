@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "dsm",
-    "dsm-storage-node",
-    "dsm-ethereum-bridge",
-    "dsm-sdk",
-    "ip-snapshot",
+    "dsm_storage_node",
+    "dsm_ethereum_bridge",
+    "dsm_sdk",
+    "ip_snapshot",
 ]
 resolver = "2"
 

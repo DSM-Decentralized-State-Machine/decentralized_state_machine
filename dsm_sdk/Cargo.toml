@@ -1,5 +1,5 @@
 [package]
-name = "dsm-sdk"
+name = "dsm_sdk"
 version = "0.1.0"
 edition = "2021"
 description = "Distributed State Machine Software Development Kit"
@@ -11,7 +11,7 @@ name = "dsm_sdk"
 path = "src/lib.rs"
 
 [[bin]]
-name = "dsm-sdk"
+name = "dsm_sdk"
 path = "src/main.rs"
 
 [features]
@@ -26,6 +26,7 @@ required-features = ["bluetooth"]
 [dependencies]
 # Core dependencies
 dsm = { path = "../dsm" }
+dsm_storage_node = { path = "../dsm_storage_node" }
 # Core numeric processing
 num-bigint = { version = "0.4.6", features = ["serde"] }
 num-traits = "0.2.17"
@@ -137,3 +138,8 @@ proptest = "1.4.0"
 quickcheck = "1.0.3"
 rstest = "0.18.2"
 serial_test = "3.0.0"
+
+
+[[example]]
+name = "test_root_token_transfer"
+path = "examples/test_root_token_transfer.rs" 

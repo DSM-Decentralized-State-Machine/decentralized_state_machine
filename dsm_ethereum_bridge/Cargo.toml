@@ -1,5 +1,5 @@
 [package]
-name = "dsm-ethereum-bridge"
+name = "dsm_ethereum_bridge"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -7,7 +7,7 @@ description = "Ethereum bridge for the Decentralized State Machine (DSM)"
 
 [dependencies]
 dsm = { path = "../dsm" }
-dsm-storage-node = { path = "../dsm-storage-node" }
+dsm_storage_node = { path = "../dsm_storage_node" }
 tokio = { version = "1.36", features = ["full"] }
 tracing = { version = "0.1", features = ["log"] }   
 actix-web = "4"

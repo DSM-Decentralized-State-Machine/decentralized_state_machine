@@ -1,5 +1,5 @@
 [package]
-name = "ip-snapshot"
+name = "ip_snapshot"
 version = "0.1.0"
 edition = "2021"
 authors = ["DSM Team"]
@@ -62,5 +62,5 @@ rustc-hash = "1.1"
 
 # DSM crates
 dsm = { path = "../dsm" }
-dsm-sdk = { path = "../dsm-sdk" }
+dsm_sdk = { path = "../dsm_sdk" }
 lazy_static = "1.5.0"

@@ -247,7 +247,8 @@ path = "tests/commitment_integration_test.rs"
 
 [[bin]]
 name = "cli"
-path = "bin/cli.rs" 
+path = "bin/cli.rs"
+
 
 [[bin]]
 name = "server"
@@ -261,3 +262,4 @@ path = "examples/start_storage_nodes.rs"
 [[example]]
 name = "user_genesis_creation"
 path = "examples/user_genesis_creation.rs"
+
