@@ -5,10 +5,10 @@
 use dsm::crypto;
 use dsm::types::error::DsmError;
 use dsm::types::operations::Operation;
-// TokenManager trait is required to access execute_token_operation method
-use dsm_sdk::core_sdk::TokenManager;
+use dsm::types::operations::TransactionMode;
+use dsm::types::operations::VerificationType;
 use dsm::types::state_types::DeviceInfo;
-use dsm::types::token_types::{Balance, TokenOperation};
+use dsm::types::token_types::Balance;
 use dsm_sdk::core_sdk::CoreSDK;
 use dsm_sdk::identity_sdk::IdentitySDK;
 use dsm_sdk::token_sdk::TokenSDK;
@@ -54,11 +54,10 @@ async fn main() -> Result<(), DsmError> {
     ));
     
     // Create token SDK for handling token operations
-    // After our architectural refactoring, we now need to use TokenSDK directly
-    let token_sdk = Arc::new(TokenSDK::new(core_sdk.clone()));
-    
-    // Pre-register the token SDK with core
-    core_sdk.register_token_manager(token_sdk.clone());
+    // Note: After our architectural refactoring, we're directly accessing state for token operations
+    // rather than using the abstracted TokenSDK interface, but we'll keep this instantiated
+    // for potential future extension points
+    let _token_sdk = Arc::new(TokenSDK::new(core_sdk.clone()));
 
     // ==========================================================================
     // Device Setup - Create two devices with Genesis states
@@ -166,11 +165,10 @@ async fn main() -> Result<(), DsmError> {
     // Mint initial ROOT tokens to the sender
     // For the mint operation, rather than trying to modify the existing state,
     // we'll let the state transition itself handle setting up the token balance
-    // Explicitly target the sender with the mint operation
     let mint_op = Operation::Mint {
         token_id: "ROOT".to_string(),
         amount: Balance::new(1000),
-        message: format!("Initial ROOT token allocation to {}", sender_device_id),
+        message: "Initial ROOT token allocation".to_string(),
         authorized_by: "Treasury".to_string(),
         proof_of_authorization: vec![0, 1, 2, 3], // Simplified proof
     };
@@ -178,59 +176,13 @@ async fn main() -> Result<(), DsmError> {
     // Then execute the mint operation
     let state_after_mint = core_sdk.execute_transition(mint_op).await?;
     println!("ROOT tokens minted to sender, state #: {}", state_after_mint.state_number);
-    
-    // Force a state update and metadata refresh
-    let _refreshed_state = core_sdk.get_current_state()?;
-    // Manual update for token metadata to ensure it's synchronized
-    if let Ok(()) = token_sdk.update_metadata().await {
-        println!("Successfully refreshed token metadata");
-    }
 
-    // Get and verify sender's balance directly using TokenSDK
-    // This provides a more reliable balance lookup through the proper API
-    let _current_state_for_balance = core_sdk.get_current_state()?;
-    let _sender_token_key = format!("{}.{}", sender_device_id, "ROOT");
-    let sender_balance = token_sdk.get_token_balance(sender_device_id, "ROOT");
-    
-    // Print detailed balance information for debugging
-    println!("DEBUG: Sender token key: {}", _sender_token_key);
-    println!("DEBUG: Current state number: {}", _current_state_for_balance.state_number);
-    println!("DEBUG: Current state hash: {:?}", _current_state_for_balance.hash);
-    
-    // Check if balance is available in the state directly
-    let state_balances = &_current_state_for_balance.token_balances;
-    if let Some(balance) = state_balances.get(&_sender_token_key) {
-        println!("DEBUG: Found balance in state directly: {:?}", balance);
-    } else {
-        println!("DEBUG: No balance found in state for key: {}", _sender_token_key);
-    }
-    
-    // Ensure balance is available for the test
-    if sender_balance.value() == 0 {
-        // Use TokenSDK to execute a follow-up mint if needed
-        let ensure_mint_op = TokenOperation::Mint {
-            token_id: "ROOT".to_string(),
-            recipient: sender_device_id.to_string(), // Explicitly set the recipient to the sender device ID
-            amount: 1000,
-        };
-        
-        // Execute the mint through TokenSDK's proper API via the TokenManager trait
-        let after_mint_state = TokenManager::execute_token_operation(&*token_sdk, ensure_mint_op).await?;
-        println!("Executed emergency mint operation to ensure balance. State #: {}", after_mint_state.state_number);
-        
-        // Force refresh balances from state after mint
-        let _refreshed_again = core_sdk.get_current_state()?;
-        if let Ok(()) = token_sdk.update_metadata().await {
-            println!("Refreshed token metadata after emergency mint");
-        }
-        
-        // Get updated balance after emergency mint
-        let emergency_balance = token_sdk.get_token_balance(sender_device_id, "ROOT");
-        println!("Balance after emergency mint: {:?}", emergency_balance);
-    }
-    
-    // Get the final balance from the token SDK for the test
-    let sender_balance = token_sdk.get_token_balance(sender_device_id, "ROOT");
+    // Get and verify sender's balance directly from the state
+    let current_state_for_balance = core_sdk.get_current_state()?;
+    let sender_balance = current_state_for_balance.token_balances
+        .get("ROOT")
+        .cloned()
+        .unwrap_or(Balance::new(0));
     println!("Sender's ROOT balance after minting: {:?}", sender_balance);
 
     // ==========================================================================
@@ -262,11 +214,11 @@ async fn main() -> Result<(), DsmError> {
 
     // Transfer ROOT tokens from sender to receiver
     let mut transfer_amount = 500;
-    // Using TokenSDK directly for token balance information
-    let _current_state_after_mint = core_sdk.get_current_state()?;
+    // Get current state after mint before making transfer
+    let current_state_after_mint = core_sdk.get_current_state()?;
     
-    // Get sender balance with correct key format - using direct TokenSDK API
-    let sender_balance = token_sdk.get_token_balance(sender_device_id, "ROOT");
+    // Get sender balance directly from current state
+    let sender_balance = current_state_after_mint.token_balances.get("ROOT").cloned().unwrap_or(Balance::new(0));
     
     // Ensure sender has sufficient balance
     if sender_balance.value() < transfer_amount {
@@ -276,18 +228,22 @@ async fn main() -> Result<(), DsmError> {
         transfer_amount = sender_balance.value();
     }
     
-    // Create a TokenOperation::Transfer directly instead of using the helper method
-    // This will be processed directly by the TokenManager trait implementation
-    let transfer_op = TokenOperation::Transfer {
+    // Create transfer operation with proper structure
+    let transfer_op = Operation::Transfer {
         token_id: "ROOT".to_string(),
+        to_address: receiver_device_id.to_string(),
+        amount: Balance::new(transfer_amount),
         recipient: receiver_device_id.to_string(),
-        amount: transfer_amount,
-        memo: Some("Transfer ROOT tokens to receiver".to_string()),
+        message: "Transfer ROOT tokens to receiver".to_string(),
+        mode: TransactionMode::Unilateral, // Using unilateral mode for online transfer
+        nonce: vec![5, 6, 7, 8],
+        verification: VerificationType::Standard,
+        pre_commit: None,
+        to: receiver_device_id.to_string(), // Added to field
     };
 
-    // Execute the transfer operation directly through the TokenManager trait
-    // which has better balance handling logic
-    let state_after_transfer = TokenManager::execute_token_operation(&*token_sdk, transfer_op).await?;
+    // Execute the transfer operation
+    let state_after_transfer = core_sdk.execute_transition(transfer_op).await?;
     println!("ROOT tokens transferred, state #: {}", state_after_transfer.state_number);
 
     // ==========================================================================
@@ -295,15 +251,13 @@ async fn main() -> Result<(), DsmError> {
     // ==========================================================================
     println!("\n=== Verifying State Updates ===");
 
-    // Get sender's balance directly using TokenSDK for consistent API usage
-    let sender_balance_after = token_sdk.get_token_balance(sender_device_id, "ROOT");
+    // Get sender's balance directly from updated state after transfer
+    let final_state = core_sdk.get_current_state()?;
+    let sender_balance_after = final_state.token_balances
+        .get("ROOT")
+        .cloned()
+        .unwrap_or(Balance::new(0));
     println!("Sender's ROOT balance after transfer: {:?}", sender_balance_after);
-    
-    // Print detailed state info including hash
-    let final_sender_state = core_sdk.get_current_state()?;
-    println!("DEBUG: Current state number: {}", final_sender_state.state_number);
-    println!("DEBUG: Current state hash: {:?}", final_sender_state.hash);
-    println!("DEBUG: State hash length: {}", final_sender_state.hash.len());
 
     // Verify sender's balance decreased by the transfer amount
     if sender_balance.value() - sender_balance_after.value() == transfer_amount {
@@ -312,9 +266,6 @@ async fn main() -> Result<(), DsmError> {
         println!("❌ Sender's balance did not decrease correctly. Expected: {}, Actual: {}", 
             sender_balance.value() - transfer_amount, sender_balance_after.value());
     }
-
-    // Get current state to access token balances - marked as intentionally unused
-    let _final_state = core_sdk.get_current_state()?;
 
     // Initialize a new CoreSDK instance for the receiver to check their state
     let receiver_core_sdk = Arc::new(CoreSDK::new());
@@ -333,9 +284,12 @@ async fn main() -> Result<(), DsmError> {
     
     println!("Retrieved receiver's current state, state #: {}", receiver_state.state_number);
     
-    // Get receiver's balance through TokenSDK for consistent API access
-    // We'll use the original token_sdk since it's properly configured with the storage node
-    let receiver_balance = token_sdk.get_token_balance(receiver_device_id, "ROOT");
+    // Get receiver's balance directly from the state map
+    let receiver_token_key = format!("{}.{}", receiver_device_id, "ROOT");
+    let receiver_balance = final_state.token_balances
+        .get(&receiver_token_key)
+        .cloned()
+        .unwrap_or(Balance::new(0));
     println!("Receiver's ROOT balance after transfer: {:?}", receiver_balance);
     
     // Verify receiver's balance increased by the transfer amount

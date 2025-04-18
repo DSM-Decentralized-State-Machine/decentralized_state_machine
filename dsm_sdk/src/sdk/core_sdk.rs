@@ -40,6 +40,9 @@ pub struct CoreSDK {
 
     /// State machine for deterministic state transitions as per section 2 of blueprint
     state_machine: Arc<RwLock<StateMachine>>,
+    
+    /// Token manager for token operations
+    token_manager: RwLock<Option<Arc<dyn TokenManager>>>,
 }
 
 impl CoreSDK {
@@ -59,7 +62,14 @@ impl CoreSDK {
             hash_chain_sdk,
             identity_sdk,
             state_machine,
+            token_manager: RwLock::new(None),
         }
+    }
+    
+    /// Register a token manager implementation
+    pub fn register_token_manager<T: TokenManager + 'static>(&self, manager: Arc<T>) {
+        let mut token_manager = self.token_manager.write();
+        *token_manager = Some(manager);
     }
 
     /// Initialize the system with a genesis state (G in section 4 of blueprint)
@@ -99,9 +109,20 @@ impl CoreSDK {
 
     /// Verify token conservation as per section 3 of blueprint
     pub async fn verify_token_conservation(&self) -> Result<bool, DsmError> {
-        // Implement token conservation verification logic
-        // This is a placeholder - actual implementation depends on token subsystem
-        Ok(true)
+        // Clone the Arc<dyn TokenManager> while holding the lock briefly
+        let manager_clone = {
+            let token_manager = self.token_manager.read();
+            token_manager.as_ref().cloned()
+        }; // Lock is released here at end of scope
+        
+        // Execute async operation after the lock is released
+        if let Some(manager) = manager_clone {
+            manager.validate_token_conservation().await
+        } else {
+            // If no token manager is registered, assume conservation is valid
+            // This is a simplification for testing purposes
+            Ok(true)
+        }
     }
 
     /// Get access to the hash chain SDK component
