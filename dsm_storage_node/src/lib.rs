@@ -4,7 +4,7 @@
 // as described in Section 16 of the DSM whitepaper.
 
 pub mod api;
-pub mod client;
+pub mod config;
 pub mod crypto;
 pub mod distribution;
 pub mod encryption;
