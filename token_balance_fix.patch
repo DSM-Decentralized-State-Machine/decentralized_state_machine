@@ -1,0 +1,79 @@
+diff --git a/dsm_sdk/src/sdk/token_sdk.rs b/dsm_sdk/src/sdk/token_sdk.rs
+index 01234567..89abcdef 100644
+--- a/dsm_sdk/src/sdk/token_sdk.rs
++++ b/dsm_sdk/src/sdk/token_sdk.rs
+@@ -961,15 +961,17 @@ impl TokenManager for TokenSDK<IdentitySDK> {
+                         let sender_balance = sender_balances
+                             .entry(token_id.clone())
+                             .or_insert_with(|| Balance::new(1000)); // Default to 1000 for testing
+-                        
+-                        // Safely deduct from sender with underflow protection
+-                        sender_balance.update_sub(*amount)?;
+-                        
+-                        // Update the state_hash to point to the current canonical state
+-                        // This ensures the balance properly links to the state in which it was modified
+-                        sender_balance.state_hash = Some(canonical_state_hash.clone());
+-                        
+-                        sender_balance.clone()
++
++                        // Get current value and calculate new value
++                        let current_value = sender_balance.value();
++                        if current_value < *amount {
++                            return Err(DsmError::validation(
++                                "Insufficient balance for transfer",
++                                None::<std::convert::Infallible>,
++                            ));
++                        }
++                        let new_value = current_value - amount;
++                        *sender_balance = Balance::from_state(new_value, canonical_state_hash.clone());
++                        sender_balance.clone() 
+                     };
+                     
+                     {
+@@ -978,13 +980,10 @@ impl TokenManager for TokenSDK<IdentitySDK> {
+                                 .or_default();
+                             
+                         recipient_balances
+-                            .entry(token_id.clone())
++                           .entry(token_id.clone())
+                             .and_modify(|balance| {
+-                                balance.update_add(*amount);
+-                                // Update state hash to the current canonical state
+-                                balance.state_hash = Some(canonical_state_hash.clone());
+-                            })
+-                            .or_insert_with(|| {
++                                let new_value = balance.value() + *amount;
++                                *balance = Balance::from_state(new_value, canonical_state_hash.clone());
+                                 // Create new balance with proper state hash link
+                                 let mut new_balance = Balance::new(*amount);
+                                 new_balance.state_hash = Some(canonical_state_hash.clone());
+@@ -997,8 +996,7 @@ impl TokenManager for TokenSDK<IdentitySDK> {
+                     token_balances.insert(canonical_sender_key, sender_balance.clone());
+                     
+                     // Create recipient balance with proper state hash
+-                    let mut recipient_balance = Balance::new(*amount);
+-                    recipient_balance.state_hash = Some(canonical_state_hash);
++                    let recipient_balance = Balance::from_state(*amount, canonical_state_hash);
+                     token_balances.insert(canonical_recipient_key, recipient_balance);
+                 }
+                 
+@@ -1035,12 +1033,12 @@ impl TokenManager for TokenSDK<IdentitySDK> {
+                 // Update the in-memory token balances atomically
+                 {
+                     let mut balances = self.balances.write();
+-                    
++                    let canonical_state_hash = new_state.hash.clone();
+                     // Add to recipient
+                     balances
+                         .entry(recipient.clone())
+                         .or_default()
+                         .entry(token_id.clone())
+                         .and_modify(|balance| {
+-                            balance.update_add(*amount);
+-                        })
+-                        .or_insert_with(|| Balance::new(*amount));
++                            let new_value = balance.value() + *amount;
++                            *balance = Balance::from_state(new_value, canonical_state_hash.clone());
++                        })
++                        .or_insert_with(|| Balance::from_state(*amount, canonical_state_hash.clone()));
+                 }

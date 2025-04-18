@@ -31,15 +31,16 @@ impl SignatureKeyPair {
 
     /// Generate a key pair from existing entropy
     pub fn generate_from_entropy(entropy: &[u8]) -> Result<Self, DsmError> {
-        // For now, we'll use the entropy to seed a PRNG and then generate a key pair
-        // In a full implementation, we would use a deterministic key derivation function
+        // Hash the entropy to get a fixed-size seed
         let seed = crate::crypto::blake3::hash_blake3_as_bytes(entropy);
-        let _seed_array: [u8; 32] = seed;
+        let seed_array: [u8; 32] = seed;
 
-        // Use the seed to generate a key pair (implementation detail)
-        // For now, we'll just call the regular generate function
-        // In real implementation, this would use the seed deterministically
-        let (public_key, secret_key) = sphincs::generate_sphincs_keypair();
+        // Generate deterministic SPHINCS+ keypair using the seed
+        let (public_key, secret_key) = sphincs::generate_sphincs_keypair_from_seed(&seed_array)
+            .map_err(|e| DsmError::Crypto {
+                context: format!("Failed to generate keypair from seed: {}", e),
+                source: None,
+            })?;
 
         Ok(Self {
             public_key,
