@@ -204,7 +204,8 @@ impl CryptoVerifier {
 
         // Prepare encapsulated state using Kyber
         let self_encapsulation = kyber_keypair.encapsulate()?;
-        let encapsulated_state = self_encapsulation.ciphertext;
+        // Create a clone of the ciphertext rather than moving out of the structure
+        let encapsulated_state = self_encapsulation.ciphertext.clone();
 
         Ok(CryptoAttestation {
             timestamp,

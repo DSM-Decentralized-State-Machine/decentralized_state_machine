@@ -165,7 +165,7 @@ impl MpcIdentityFactory {
 
         // Append a different suffix for Kyber to avoid using the same entropy
         key_entropy.extend_from_slice(b"kyber_specific");
-        let kyber_keypair = KyberKeyPair::generate_from_entropy(&key_entropy)?;
+        let kyber_keypair = KyberKeyPair::generate_from_entropy(&key_entropy, Some("DSM_MULTIPARTY_KYBER"))?;
 
         // Create the identity
         let identity = CryptoIdentity::new(

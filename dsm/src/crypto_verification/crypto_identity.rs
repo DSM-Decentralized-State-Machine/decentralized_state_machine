@@ -366,7 +366,7 @@ impl CryptoIdentityFactory {
         let sphincs_keypair = SignatureKeyPair::generate_from_entropy(&key_entropy)?;
 
         // Generate Kyber keypair
-        let kyber_keypair = KyberKeyPair::generate_from_entropy(&key_entropy)?;
+        let kyber_keypair = KyberKeyPair::generate_from_entropy(&key_entropy, Some("DSM_IDENTITY_KYBER"))?;
 
         // Create MPC seed share from contributions
         let mut mpc_data = Vec::new();

@@ -165,7 +165,7 @@ pub fn create_token_genesis(
 
     // 6. Generate post-quantum SPHINCS+ and Kyber keys
     let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
-    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair();
+    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair()?;
 
     // 7. Process the policy file if provided
     let policy_anchor = if let Some(policy) = policy_file {

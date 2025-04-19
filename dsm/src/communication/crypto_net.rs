@@ -125,7 +125,7 @@ impl KeyPair {
     /// Creates a new Kyber key pair
     pub fn new() -> Self {
         // Generate a new Kyber keypair using the core crypto module
-        let (public_key, private_key) = kyber::generate_kyber_keypair();
+        let (public_key, private_key) = kyber::generate_kyber_keypair()?;
 
         Self {
             public_key,
@@ -163,7 +163,7 @@ impl Default for KyberCryptoProvider {
 impl CryptoProvider for KyberCryptoProvider {
     fn generate_keypair(&self) -> Result<TypesKeyPair, DsmError> {
         // Generate a new Kyber keypair using the core crypto module
-        let (public_key, private_key) = kyber::generate_kyber_keypair();
+        let (public_key, private_key) = kyber::generate_kyber_keypair()?;
 
         Ok(TypesKeyPair {
             public_key,

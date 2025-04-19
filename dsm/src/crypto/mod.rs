@@ -71,7 +71,7 @@ pub fn init_crypto() {
 
 pub fn generate_keypair() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     // Generate Kyber key pair for encryption
-    let (kyber_public, kyber_secret) = kyber::generate_kyber_keypair();
+    let (kyber_public, kyber_secret) = kyber::generate_kyber_keypair().unwrap();
     // Generate SPHINCS+ key pair for signatures
     let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair();
 
@@ -111,7 +111,12 @@ pub fn verify_signature(data: &[u8], signature: &[u8], public_key: &[u8]) -> boo
 pub fn encrypt_for_recipient(recipient_pk: &[u8], message: &[u8]) -> Option<Vec<u8>> {
     // Encapsulate a symmetric key using the recipient's public key.
     // This function is assumed to return a tuple of (symmetric_key, encapsulated_key)
-    let (symmetric_key, encapsulated_key) = kyber::kyber_encapsulate(recipient_pk).ok()?;
+    let encapsulation_result = match kyber::kyber_encapsulate(recipient_pk) {
+        Ok((symmetric_key, encapsulated_key)) => (symmetric_key, encapsulated_key),
+        Err(_) => return None,
+    };
+
+    let (symmetric_key, encapsulated_key) = encapsulation_result;
 
     // Ensure the symmetric key is 32 bytes.
     let key_bytes = if symmetric_key.len() >= 32 {

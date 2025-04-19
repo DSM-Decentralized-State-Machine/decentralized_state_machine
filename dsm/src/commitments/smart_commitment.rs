@@ -1328,7 +1328,7 @@ mod tests {
 
         // Use a proper Kyber keypair instead of small test vectors
         // Generate a real keypair from the kyber crate
-        let (pk, sk) = crate::crypto::kyber::generate_kyber_keypair();
+        let (pk, sk) = crate::crypto::kyber::generate_kyber_keypair()?;
 
         println!("Public key size: {}", pk.len());
         println!("Secret key size: {}", sk.len());

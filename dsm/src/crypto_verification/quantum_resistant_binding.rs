@@ -147,7 +147,8 @@ impl QuantumResistantBinding {
 
         // Prepare encapsulated state using Kyber
         let self_encapsulation = kyber_keypair.encapsulate()?;
-        let encapsulated_state = self_encapsulation.ciphertext;
+        // Clone the ciphertext rather than moving it out of the structure
+        let encapsulated_state = self_encapsulation.ciphertext.clone();
 
         Ok(DeviceAttestation {
             timestamp,
