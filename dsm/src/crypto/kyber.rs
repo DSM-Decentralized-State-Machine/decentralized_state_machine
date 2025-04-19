@@ -74,6 +74,7 @@ pub struct EntropyContext {
     entropy: Vec<u8>,
     
     /// Blake3 hasher instance for deterministic derivation
+    #[allow(dead_code)]
     hasher: Hasher,
 }
 

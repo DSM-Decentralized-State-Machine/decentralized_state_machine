@@ -222,7 +222,7 @@ pub fn derive_sub_token_genesis(
 
     // Create new quantum keys for the sub-genesis
     let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
-    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair();
+    let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair()?;
 
     // Process the policy file if provided, otherwise inherit from parent
     let policy_anchor = if let Some(policy) = policy_file {

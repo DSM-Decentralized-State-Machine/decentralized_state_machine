@@ -63,7 +63,7 @@ pub fn get_private_key(id: &str) -> Result<Vec<u8>, DsmError> {
 /// Initialize cryptography subsystem
 pub fn init_crypto() {
     // Initialize the post-quantum cryptographic subsystem
-    kyber::init_kyber();
+    let _ = kyber::init_kyber();
     sphincs::init_sphincs();
     rng::ensure_rng_initialization();
     debug!("Cryptography subsystem initialized");
