@@ -73,7 +73,7 @@ pub fn generate_keypair() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     // Generate Kyber key pair for encryption
     let (kyber_public, kyber_secret) = kyber::generate_kyber_keypair().unwrap();
     // Generate SPHINCS+ key pair for signatures
-    let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair();
+    let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair().unwrap();
 
     (kyber_public, kyber_secret, sphincs_public, sphincs_secret)
 }

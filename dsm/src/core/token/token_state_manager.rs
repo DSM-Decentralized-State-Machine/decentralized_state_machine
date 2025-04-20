@@ -85,7 +85,7 @@ pub fn insufficient_balance(message: impl Into<String>) -> DsmError {
 use crate::cpta::policy_verification::{PolicyVerificationResult, verify_policy};
 use crate::types::operations::{Ops, Operation};
 use crate::types::policy_types::PolicyAnchor;
-use pqcrypto_traits::sign::{PublicKey as _, DetachedSignature as _};
+// Using our native SPHINCS+ implementation
 use subtle::ConstantTimeEq;
 
 impl TokenStateManager {
@@ -797,23 +797,10 @@ impl TokenStateManager {
         public_key: &[u8],
         message: &[u8],
     ) -> Result<bool, DsmError> {
-        use pqcrypto_sphincsplus::sphincssha2256fsimple::{
-            PublicKey, DetachedSignature, verify_detached_signature,
-        };
+        use crate::crypto::sphincs;
 
-        // Convert public key bytes to SPHINCS+ public key
-        let pk = PublicKey::from_bytes(public_key).map_err(|_| DsmError::InvalidPublicKey)?;
-
-        // Convert signature bytes to SPHINCS+ signature
-        let sig = DetachedSignature::from_bytes(signature).map_err(|_| {
-            DsmError::crypto(
-                "Invalid signature format".to_string(),
-                None::<std::io::Error>,
-            )
-        })?;
-
-        // Verify signature using SPHINCS+
-        Ok(verify_detached_signature(&sig, message, &pk).is_ok())
+        // Use our pure Rust implementation of SPHINCS+
+        sphincs::sphincs_verify(public_key, message, signature)
     }
 
     /// Helper function for constant-time equality comparison using subtle crate

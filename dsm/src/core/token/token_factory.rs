@@ -164,7 +164,7 @@ pub fn create_token_genesis(
     let token_entropy = build_token_entropy(&token_hash, &selected);
 
     // 6. Generate post-quantum SPHINCS+ and Kyber keys
-    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
+    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair()?;
     let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair()?;
 
     // 7. Process the policy file if provided
@@ -221,7 +221,7 @@ pub fn derive_sub_token_genesis(
     let derived_entropy = hasher.finalize().to_vec();
 
     // Create new quantum keys for the sub-genesis
-    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair();
+    let (sphincs_public_key, sphincs_private_key) = generate_sphincs_keypair()?;
     let (kyber_pub_key, kyber_secret_key) = generate_kyber_keypair()?;
 
     // Process the policy file if provided, otherwise inherit from parent

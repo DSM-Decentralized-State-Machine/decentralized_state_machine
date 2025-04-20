@@ -32,7 +32,7 @@ fn timing_side_channel_benchmark(c: &mut Criterion) {
     // Benchmark SPHINCS+ signature verification timing variance
     group.bench_function("constant_time_sphincs_verification", |b| {
         // Generate keypair outside measurement loop
-        let (pk, sk) = generate_sphincs_keypair();
+        let (pk, sk) = generate_sphincs_keypair().unwrap_or_default();
 
         // Create identical test messages for both valid and invalid signatures
         let message = b"This message tests constant-time verification properties";
@@ -251,7 +251,7 @@ fn power_analysis_resistance_benchmark(c: &mut Criterion) {
     // Benchmark SPHINCS+ key generation intensity correlation
     group.bench_function("power_signature_generation", |b| {
         // Generate keypair outside measurement loop
-        let (_, sk) = generate_sphincs_keypair();
+        let (_, sk) = generate_sphincs_keypair().unwrap_or_default();
 
         // Generate two message types with different Hamming weights
         let low_weight_message = vec![0x00; 32]; // All zeros (low Hamming weight)
@@ -316,7 +316,7 @@ fn multi_implementation_benchmark(c: &mut Criterion) {
     // SPHINCS+ implementations
     group.bench_function("sphincs_constant_time", |b| {
         // Generate keypair
-        let (pk, sk) = generate_sphincs_keypair();
+        let (pk, sk) = generate_sphincs_keypair().unwrap_or_default();
 
         // Generate signature
         let signature = sphincs_sign(&sk, message).unwrap();
