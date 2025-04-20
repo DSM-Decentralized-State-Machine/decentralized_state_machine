@@ -3,7 +3,7 @@
 // Implementation of multiparty computation (MPC) for trustless genesis state creation
 // as described in the DSM whitepaper, replacing hardware TEE dependency with
 // distributed cryptographic security.
-use super::cryptographic_identity::CryptoIdentity;
+use crate::core::identity::{GenesisState, Identity, SigningKey, KyberKey};
 use crate::crypto::hash::{blake3, HashOutput};
 use crate::crypto::kyber::KyberKeyPair;
 use crate::crypto::signatures::SignatureKeyPair;
@@ -119,7 +119,7 @@ impl MpcIdentityFactory {
     /// * `Result<(CryptoIdentity, SignatureKeyPair, KyberKeyPair), DsmError>` - New identity with keypairs
     pub fn create_identity(
         &self,
-    ) -> Result<(CryptoIdentity, SignatureKeyPair, KyberKeyPair), DsmError> {
+    ) -> Result<(Identity, SignatureKeyPair, KyberKeyPair), DsmError> {
         if !self.threshold_met() {
             return Err(DsmError::validation(
                 format!(
@@ -167,13 +167,32 @@ impl MpcIdentityFactory {
         key_entropy.extend_from_slice(b"kyber_specific");
         let kyber_keypair = KyberKeyPair::generate_from_entropy(&key_entropy, Some("DSM_MULTIPARTY_KYBER"))?;
 
+        // Create the genesis state
+        let genesis_state = GenesisState {
+            hash: mpc_seed_share.as_bytes().to_vec(),
+            initial_entropy: key_entropy.clone(),
+            threshold: self.threshold,
+            participants: sorted_contributions.iter().take(self.threshold).map(|c| c.party_id.clone()).collect(),
+            merkle_root: None,
+            device_id: Some(format!("device_{}", hex::encode(&mpc_seed_share.as_bytes()[0..4]))),
+            signing_key: SigningKey {
+                public_key: sphincs_keypair.public_key.clone(),
+                secret_key: sphincs_keypair.secret_key.clone(),
+            },
+            kyber_keypair: KyberKey {
+                public_key: kyber_keypair.public_key.clone(),
+                secret_key: kyber_keypair.secret_key.clone(),
+            },
+            contributions: vec![]
+        };
+        
         // Create the identity
-        let identity = CryptoIdentity::new(
-            &self.app_id,
-            mpc_seed_share.as_bytes(),
-            &sphincs_keypair,
-            &kyber_keypair,
-        )?;
+        let identity = Identity {
+            name: self.app_id.clone(),
+            master_genesis: genesis_state,
+            devices: vec![],
+            invalidated: false,
+        };
 
         Ok((identity, sphincs_keypair, kyber_keypair))
     }
@@ -187,7 +206,7 @@ impl MpcIdentityFactory {
     /// * `Result<(CryptoIdentity, SignatureKeyPair, KyberKeyPair), DsmError>` - Test identity
     pub fn create_test_identity(
         app_id: &str,
-    ) -> Result<(CryptoIdentity, SignatureKeyPair, KyberKeyPair), DsmError> {
+    ) -> Result<(Identity, SignatureKeyPair, KyberKeyPair), DsmError> {
         // Create deterministic test seed
         let test_seed = format!("test_seed_for_{}", app_id);
         let mpc_seed_share = blake3(test_seed.as_bytes());
@@ -196,13 +215,32 @@ impl MpcIdentityFactory {
         let sphincs_keypair = SignatureKeyPair::generate()?;
         let kyber_keypair = KyberKeyPair::generate()?;
 
-        // Create identity
-        let identity = CryptoIdentity::new(
-            app_id,
-            mpc_seed_share.as_bytes(),
-            &sphincs_keypair,
-            &kyber_keypair,
-        )?;
+        // Create the genesis state
+        let genesis_state = GenesisState {
+            hash: mpc_seed_share.as_bytes().to_vec(),
+            initial_entropy: mpc_seed_share.as_bytes().to_vec(),
+            threshold: 1,
+            participants: std::collections::HashSet::from(["test_participant".to_string()]),
+            merkle_root: None,
+            device_id: Some(format!("device_{}", hex::encode(&mpc_seed_share.as_bytes()[0..4]))),
+            signing_key: SigningKey {
+                public_key: sphincs_keypair.public_key.clone(),
+                secret_key: sphincs_keypair.secret_key.clone(),
+            },
+            kyber_keypair: KyberKey {
+                public_key: kyber_keypair.public_key.clone(),
+                secret_key: kyber_keypair.secret_key.clone(),
+            },
+            contributions: vec![]
+        };
+        
+        // Create the identity
+        let identity = Identity {
+            name: app_id.to_string(),
+            master_genesis: genesis_state,
+            devices: vec![],
+            invalidated: false,
+        };
 
         Ok((identity, sphincs_keypair, kyber_keypair))
     }
@@ -259,7 +297,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (identity, _, _) = result.unwrap();
-        assert_eq!(identity.app_id, app_id);
+        assert_eq!(identity.name, app_id);
     }
 
     #[test]
@@ -312,6 +350,6 @@ mod tests {
         assert!(result.is_ok());
 
         let (identity, _, _) = result.unwrap();
-        assert_eq!(identity.app_id, app_id);
+        assert_eq!(identity.name, app_id);
     }
 }

@@ -11,8 +11,6 @@ trait StateExtension {
     fn get_counterparty_signature(&self) -> Option<Vec<u8>>;
     fn get_projection_commitment(&self) -> Option<Vec<u8>>;
     fn set_owner_id(&mut self, owner_id: String);
-    fn set_entity_signature(&mut self, signature: Option<Vec<u8>>);
-    fn set_counterparty_signature(&mut self, signature: Option<Vec<u8>>);
     fn set_projection_commitment(&mut self, commitment: Option<Vec<u8>>);
 }
 
@@ -46,18 +44,7 @@ impl StateExtension for State {
         self.device_id = owner_id;
     }
 
-    fn set_entity_signature(&mut self, signature: Option<Vec<u8>>) {
-        if let Some(sig) = signature {
-            // Use add_metadata method which is public
-            let _ = self.add_metadata("entity_signature", sig);
-        }
-    }
 
-    fn set_counterparty_signature(&mut self, signature: Option<Vec<u8>>) {
-        if let Some(sig) = signature {
-            let _ = self.add_metadata("counterparty_signature", sig);
-        }
-    }
 
     fn set_projection_commitment(&mut self, commitment: Option<Vec<u8>>) {
         if let Some(comm) = commitment {

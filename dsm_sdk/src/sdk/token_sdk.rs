@@ -1,13 +1,53 @@
-//! Token SDK Module
+//! # Token SDK Module
 //!
 //! This module implements the token management functionality as described in
-//! section 3 of the mathematical blueprint, providing atomic token operations with
+//! section 3 of the DSM whitepaper, providing atomic token operations with
 //! strict conservation properties for the ROOT token system.
 //!
-//! ROOT (Resilient Oracle-Optimized Trustless token) serves as the exclusive native token
-//! for the DSM ecosystem, handling all fee structures, subscription payments, and economic
-//! governance. While application-specific tokens may be created within the DSM framework,
-//! all system-level operations require ROOT as the transactional medium.
+//! ## Key Concepts
+//!
+//! * **ROOT Token**: The native token of the DSM ecosystem (Resilient Oracle-Optimized Trustless token)
+//! * **Token Conservation**: Mathematical guarantees of token supply integrity
+//! * **Atomic Operations**: Transaction guarantees for token transfers
+//! * **Fee Structures**: Dynamic fee management for system operations
+//! * **Bilateral Transfers**: Secure peer-to-peer token exchange protocol
+//!
+//! ## Architecture
+//!
+//! ROOT serves as the exclusive native token for the DSM ecosystem, handling all fee 
+//! structures, subscription payments, and economic governance. While application-specific 
+//! tokens may be created within the DSM framework, all system-level operations require 
+//! ROOT as the transactional medium.
+//!
+//! ## Usage Example
+//!
+//! ```rust
+//! use dsm_sdk::token_sdk::TokenSDK;
+//! use dsm_sdk::core_sdk::CoreSDK;
+//! use dsm::types::token_types::{Balance, TokenOperation};
+//! use std::sync::Arc;
+//!
+//! async fn example() {
+//!     // Create token SDK with core SDK
+//!     let core_sdk = Arc::new(CoreSDK::new());
+//!     let token_sdk = TokenSDK::new(core_sdk);
+//!
+//!     // Transfer tokens
+//!     let op = TokenOperation::Transfer {
+//!         token_id: "ROOT".to_string(),
+//!         recipient: "recipient123".to_string(),
+//!         amount: 100,
+//!         memo: Some("Payment for services".to_string()),
+//!     };
+//!
+//!     let new_state = token_sdk.execute_token_operation(op).await.unwrap();
+//!     println!("New state after transfer: {}", new_state.state_number);
+//!
+//!     // Check balance
+//!     let balance = token_sdk.get_balance().await.unwrap();
+//!     println!("Current balance: {}", balance.value());
+//! }
+//! ```
 
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 

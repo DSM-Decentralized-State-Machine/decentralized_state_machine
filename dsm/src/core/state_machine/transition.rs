@@ -626,10 +626,13 @@ fn to_local_verification_type(
 ) -> VerificationType {
     match verification {
         crate::types::operations::VerificationType::Standard => VerificationType::Standard,
-        crate::types::operations::VerificationType::Enhanced => VerificationType::Bilateral, // Map Enhanced to Bilateral
-        crate::types::operations::VerificationType::Custom(_) => VerificationType::Directory, // Map Custom to Directory
+        crate::types::operations::VerificationType::Enhanced => VerificationType::Bilateral,
+        crate::types::operations::VerificationType::Custom(_) => VerificationType::Directory,
         crate::types::operations::VerificationType::Bilateral => VerificationType::Bilateral,
         crate::types::operations::VerificationType::Directory => VerificationType::Directory,
+        crate::types::operations::VerificationType::StandardBilateral => VerificationType::Bilateral,
+        crate::types::operations::VerificationType::PreCommitted => VerificationType::Standard,
+        crate::types::operations::VerificationType::UnilateralIdentityAnchor => VerificationType::Standard,
     }
 }
 

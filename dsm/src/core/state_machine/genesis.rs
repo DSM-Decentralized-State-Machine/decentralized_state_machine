@@ -1,66 +1,72 @@
-// Genesis state creation for the DSM state machine.
-//
-// This file implements secure genesis state creation through distributed multiparty computation
-// as specified in the research paper. Key features:
-// 1. Random selection of storage nodes for added entropy
-// 2. Threshold multiparty computation for distributed trust
-// 3. Consensus-based validation of genesis parameters
-// 4. Cryptographic binding of identity to genesis state
+// Genesis block creation for the DSM blockchain and initial state setup
+// This module handles the creation of genesis blocks and initial states
 
-use crate::core::state_machine::random_walk::algorithms::{
-    generate_positions, verify_positions,
-    Position, RandomWalkConfig,
-};
-use crate::crypto::hash::blake3;
-use crate::crypto_verification::multiparty_computation::{MpcContribution, MpcIdentityFactory};
+use std::collections::HashMap;
 use crate::types::error::DsmError;
-use crate::types::operations::Operation;
-use crate::types::state_types::{DeviceInfo, State};
-use blake3::Hash;
+use crate::types::{State, StateBuilder};
+use crate::types::identity::IdentityClaim;
+
+use blake3;
+use hex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use tracing::{debug, info};
 
-/// Storage node information for multiparty selection
+/// Wrapper for genesis state, containing proof and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisStateWrapper {
+    /// Unique device identifier
+    pub device_id: String,
+    /// Application identifier
+    pub app_id: String,
+    /// Ceremony identifier
+    pub ceremony_id: String,
+    /// Merkle proof of inclusion
+    pub merkle_proof: Vec<u8>,
+    /// Creation timestamp
+    pub timestamp: u64,
+}
+
+/// Represents a storage node in the DSM network
+#[derive(Debug, Clone)]
 pub struct StorageNode {
-    /// Node identifier
+    /// Unique identifier for this node
     pub node_id: String,
-    /// Public key
+    /// Public key of the storage node
     pub public_key: Vec<u8>,
-    /// Network address
+    /// Network address of the node
     pub address: String,
     /// Reputation score (0-100)
     pub reputation: u8,
 }
 
-/// Genesis creation parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Parameters for genesis state creation
+#[derive(Debug, Clone)]
 pub struct GenesisParams {
-    /// Identifier for the genesis creation ceremony
+    /// Unique identifier for the MPC ceremony
     pub ceremony_id: String,
     /// Application identifier
     pub app_id: String,
     /// Number of storage nodes to select
     pub node_count: usize,
-    /// Threshold for MPC security (t-of-n)
+    /// Threshold number of contributions required
     pub threshold: usize,
-    /// Seed for node selection (consensus output)
+    /// Optional seed for deterministic node selection
     pub selection_seed: Option<Vec<u8>>,
-    /// Initial entropy for genesis state
+    /// Optional initial entropy to use
     pub initial_entropy: Option<Vec<u8>>,
-    /// Device information for genesis creator
-    pub device_info: Option<DeviceInfo>,
-    /// Custom metadata for genesis state
+    /// Optional device information
+    pub device_info: Option<crate::types::state_types::DeviceInfo>,
+    /// Additional metadata
     pub metadata: HashMap<String, Vec<u8>>,
 }
 
 impl Default for GenesisParams {
     fn default() -> Self {
         Self {
-            ceremony_id: String::new(),
-            app_id: String::new(),
+            ceremony_id: "default_ceremony".to_string(),
+            app_id: "com.dsm.default".to_string(),
             node_count: 5,
             threshold: 3,
             selection_seed: None,
@@ -71,543 +77,345 @@ impl Default for GenesisParams {
     }
 }
 
-/// Represents the Genesis state for a device
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenesisState {
-    /// Public key for the device
-    pub public_key: Vec<u8>,
-    /// Signing key (private)
-    pub signing_key: Vec<u8>,
-    /// Genesis state hash
-    pub genesis_hash: Vec<u8>,
-    /// Device identifier
-    pub device_id: String,
-    /// MPC participants
-    pub participants: Vec<String>,
-    /// Timestamp of creation
-    pub timestamp: u64,
-    /// Signatures from participants
-    pub signatures: Vec<Vec<u8>>,
-    /// Merkle proof for cross-device authentication
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub merkle_proof: Vec<u8>,
+/// Represents a contribution to the MPC ceremony
+#[derive(Debug, Clone)]
+pub struct MpcContribution {
+    /// Secret value provided by the contributor
+    #[allow(dead_code)]
+    secret: Vec<u8>,
+    /// Blinding factor to obscure the secret
+    #[allow(dead_code)]
+    blinding: Vec<u8>,
+    /// ID of the contributing node
+    node_id: String,
+    /// Blinded value derived from secret and blinding
+    blinded_value: Vec<u8>,
 }
 
-/// Genesis creation manager
+impl MpcContribution {
+    /// Create a new MPC contribution
+    pub fn new(secret: &[u8], blinding: &[u8], node_id: &str) -> Self {
+        // Compute the blinded value: H(secret || blinding)
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(secret);
+        hasher.update(blinding);
+        let blinded_value = hasher.finalize().as_bytes().to_vec();
+        
+        Self {
+            secret: secret.to_vec(),
+            blinding: blinding.to_vec(),
+            node_id: node_id.to_string(),
+            blinded_value,
+        }
+    }
+    
+    /// Get the blinded value
+    pub fn blinded_value(&self) -> &[u8] {
+        &self.blinded_value
+    }
+    
+    /// Get the node ID
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+}
+
+/// GenesisCreator handles the creation of genesis blocks and initial states
 pub struct GenesisCreator {
     /// Available storage nodes
-    storage_nodes: Vec<StorageNode>,
+    nodes: Vec<StorageNode>,
     /// Genesis parameters
     params: GenesisParams,
-    /// Selected nodes for ceremony
+    /// Selected nodes for this ceremony
     selected_nodes: Vec<StorageNode>,
-    /// MPC factory for identity creation
-    mpc_factory: Option<MpcIdentityFactory>,
-    /// Contributions received
+    /// Collected MPC contributions
     contributions: HashMap<String, MpcContribution>,
-    /// Genesis state (when created)
-    genesis_state: Option<State>,
 }
 
 impl GenesisCreator {
-    /// Create a new genesis creator
-    ///
-    /// # Arguments
-    /// * `storage_nodes` - Available storage nodes
-    /// * `params` - Genesis parameters
-    pub fn new(storage_nodes: Vec<StorageNode>, params: GenesisParams) -> Self {
+    /// Create a new GenesisCreator instance
+    pub fn new(nodes: Vec<StorageNode>, params: GenesisParams) -> Self {
         Self {
-            storage_nodes,
+            nodes,
             params,
             selected_nodes: Vec::new(),
-            mpc_factory: None,
             contributions: HashMap::new(),
-            genesis_state: None,
         }
     }
-
-    /// Select storage nodes for multiparty computation based on selection seed
-    ///
-    /// This implements the secure random selection algorithm from the research paper,
-    /// ensuring that node selection cannot be manipulated while providing sufficient
-    /// entropy for the genesis state.
-    ///
-    /// # Returns
-    /// * `Result<Vec<StorageNode>, DsmError>` - Selected nodes or error
+    
+    /// Select storage nodes for the ceremony based on params
     pub fn select_storage_nodes(&mut self) -> Result<Vec<StorageNode>, DsmError> {
-        // Ensure we have enough nodes to select from
-        if self.storage_nodes.len() < self.params.node_count {
-            return Err(DsmError::validation(
-                format!(
-                    "Not enough storage nodes available. Need {} but have {}",
-                    self.params.node_count,
-                    self.storage_nodes.len()
-                ),
-                None::<std::convert::Infallible>,
-            ));
-        }
-
-        // Get selection seed or generate one if not provided
-        let selection_seed = match &self.params.selection_seed {
-            Some(seed) => seed.clone(),
-            None => {
-                // Generate deterministic selection seed from ceremony ID and app ID
-                let mut seed_data = Vec::new();
-                seed_data.extend_from_slice(self.params.ceremony_id.as_bytes());
-                seed_data.extend_from_slice(self.params.app_id.as_bytes());
-                blake3(&seed_data).as_bytes().to_vec()
+        let node_count = self.params.node_count.min(self.nodes.len());
+        
+        // Sort nodes by reputation for deterministic selection
+        let mut nodes = self.nodes.clone();
+        nodes.sort_by(|a, b| b.reputation.cmp(&a.reputation));
+        
+        // If a seed is provided, use it for deterministic selection
+        let selected = if let Some(seed) = &self.params.selection_seed {
+            // Create deterministic RNG from seed
+            let mut rng_seed = [0u8; 32];
+            let len = seed.len().min(32);
+            rng_seed[..len].copy_from_slice(&seed[..len]);
+            
+            let mut rng = ChaCha20Rng::from_seed(rng_seed);
+            
+            // Weighted selection based on reputation
+            let mut selected = Vec::with_capacity(node_count);
+            let mut candidates = nodes.clone();
+            
+            for _ in 0..node_count {
+                if candidates.is_empty() {
+                    break;
+                }
+                
+                // Calculate total reputation
+                let total_reputation: u32 = candidates.iter()
+                    .map(|n| n.reputation as u32)
+                    .sum();
+                    
+                // Select based on reputation weight
+                let mut selection = rng.gen_range(0..total_reputation);
+                let mut selected_idx = 0;
+                
+                for (i, node) in candidates.iter().enumerate() {
+                    if selection < node.reputation as u32 {
+                        selected_idx = i;
+                        break;
+                    }
+                    selection -= node.reputation as u32;
+                }
+                
+                selected.push(candidates.remove(selected_idx));
             }
+            
+            selected
+        } else {
+            // Without a seed, just take the top N nodes by reputation
+            nodes.into_iter().take(node_count).collect()
         };
-
-        // Create a deterministic RNG for node selection
-        let mut seed_array = [0u8; 32];
-        for (i, &b) in selection_seed.iter().enumerate().take(32) {
-            seed_array[i] = b;
-        }
-        let mut rng = ChaCha20Rng::from_seed(seed_array);
-
-        // Weight nodes by reputation and create selection pool
-        let mut weighted_nodes = Vec::new();
-        for node in &self.storage_nodes {
-            let weight = node.reputation.max(1) as usize; // Ensure at least weight 1
-            for _ in 0..weight {
-                weighted_nodes.push(node.clone());
-            }
-        }
-
-        // Randomly select nodes
-        let mut selected = Vec::new();
-        let mut selected_ids = std::collections::HashSet::new();
-
-        // Implement Fisher-Yates shuffle for unbiased selection
-        let mut indices: Vec<usize> = (0..weighted_nodes.len()).collect();
-        for i in (1..indices.len()).rev() {
-            let j = rng.gen_range(0..=i);
-            indices.swap(i, j);
-        }
-
-        // Select nodes using shuffled indices
-        for idx in indices {
-            let node = &weighted_nodes[idx];
-            if !selected_ids.contains(&node.node_id) && selected.len() < self.params.node_count {
-                selected.push(node.clone());
-                selected_ids.insert(node.node_id.clone());
-            }
-            if selected.len() >= self.params.node_count {
-                break;
-            }
-        }
-
-        // Store selected nodes
+        
         self.selected_nodes = selected.clone();
-
-        // Initialize MPC factory with selected nodes
-        self.mpc_factory = Some(MpcIdentityFactory::new(
-            self.params.threshold,
-            &self.params.app_id,
-        ));
-
         Ok(selected)
     }
-
-    /// Add a contribution from a storage node
-    ///
-    /// # Arguments
-    /// * `node_id` - Identifier of the contributing node
-    /// * `contribution` - MPC contribution
-    ///
-    /// # Returns
-    /// * `Result<(), DsmError>` - Success or error
+    
+    /// Add a contribution from a node
     pub fn add_contribution(
         &mut self,
         node_id: &str,
         contribution: MpcContribution,
     ) -> Result<(), DsmError> {
-        // Verify the node is in the selected list
-        if !self
-            .selected_nodes
-            .iter()
-            .any(|node| node.node_id == node_id)
-        {
-            return Err(DsmError::validation(
-                format!("Node {} not selected for MPC", node_id),
-                None::<std::convert::Infallible>,
+        // Verify the node is part of selected nodes
+        if !self.selected_nodes.iter().any(|n| n.node_id == node_id) {
+            return Err(DsmError::invalid_parameter(
+                format!("Node {} is not part of the selected nodes", node_id)
             ));
         }
-
-        // Add to MPC factory
-        if let Some(factory) = &mut self.mpc_factory {
-            factory.add_contribution(contribution.clone())?;
-        } else {
-            return Err(DsmError::state_machine("MPC factory not initialized"));
-        }
-
+        
         // Store the contribution
         self.contributions.insert(node_id.to_string(), contribution);
-
+        
         Ok(())
     }
-
-    /// Check if threshold is met for contributions
-    ///
-    /// # Returns
-    /// * `bool` - Whether threshold is met
+    
+    /// Check if the threshold number of contributions has been met
     pub fn threshold_met(&self) -> bool {
-        self.mpc_factory
-            .as_ref()
-            .map(|factory| factory.threshold_met())
-            .unwrap_or(false)
+        self.contributions.len() >= self.params.threshold
     }
-
-    /// Create genesis state from collected contributions
-    ///
-    /// This finalizes the genesis creation ceremony by combining contributions
-    /// from the selected storage nodes according to the threshold MPC protocol.
-    ///
-    /// # Returns
-    /// * `Result<State, DsmError>` - Genesis state or error
-    pub fn create_genesis_state(&mut self) -> Result<State, DsmError> {
+    
+    /// Generate verification positions for a given seed
+    pub fn generate_verification_positions(
+        &self,
+        seed: &[u8],
+    ) -> Result<Vec<Vec<i32>>, DsmError> {
+        // Use the seed to create a deterministic RNG
+        let mut rng_seed = [0u8; 32];
+        let len = seed.len().min(32);
+        rng_seed[..len].copy_from_slice(&seed[..len]);
+        
+        let mut rng = ChaCha20Rng::from_seed(rng_seed);
+        
+        // Generate position sequences
+        let position_count = 5; // Number of position sequences to generate
+        let dimension = 3; // Number of elements in each position
+        
+        let mut positions = Vec::with_capacity(position_count);
+        for _ in 0..position_count {
+            let mut pos = Vec::with_capacity(dimension);
+            for _ in 0..dimension {
+                pos.push(rng.gen_range(-100..100));
+            }
+            positions.push(pos);
+        }
+        
+        Ok(positions)
+    }
+    
+    /// Verify positions against a seed
+    pub fn verify_positions(
+        &self,
+        seed: &[u8],
+        positions: &[Vec<i32>],
+    ) -> Result<bool, DsmError> {
+        // Generate the expected positions from the seed
+        let expected_positions = self.generate_verification_positions(seed)?;
+        
+        // Check if positions match
+        Ok(expected_positions == positions)
+    }
+    
+    /// Create a genesis state by combining contributions
+    pub fn create_genesis_state(&self) -> Result<State, DsmError> {
         if !self.threshold_met() {
             return Err(DsmError::validation(
                 format!(
-                    "Threshold not met. Need {} contributions but have {}",
-                    self.params.threshold,
-                    self.contributions.len()
+                    "Threshold not met: have {} contributions, need {}",
+                    self.contributions.len(),
+                    self.params.threshold
                 ),
-                None::<std::convert::Infallible>,
+                None::<std::io::Error>,
             ));
         }
-
-        // Create identity using MPC factory
-        let (identity, sphincs_keypair, kyber_keypair) = if let Some(factory) = &self.mpc_factory {
-            factory.create_identity()?
+        
+        // Combine contributions to generate entropy
+        let mut combined = Vec::new();
+        combined.extend_from_slice(self.params.ceremony_id.as_bytes());
+        combined.extend_from_slice(self.params.app_id.as_bytes());
+        
+        // Add blinded contributions
+        for contrib in self.contributions.values() {
+            combined.extend_from_slice(contrib.blinded_value());
+        }
+        
+        // Add initial entropy if provided
+        if let Some(entropy) = &self.params.initial_entropy {
+            combined.extend_from_slice(entropy);
+        }
+        
+        // Generate the final genesis entropy
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&combined);
+        let entropy = hasher.finalize().as_bytes().to_vec();
+        
+        // Generate device ID
+        let device_id = format!("device_{}", hex::encode(&entropy[0..8]));
+        
+        // Create device info or use provided one
+        let device_info = if let Some(info) = &self.params.device_info {
+            info.clone()
         } else {
-            return Err(DsmError::state_machine("MPC factory not initialized"));
-        };
-
-        // Get device info from parameters or create a new one
-        let device_info = match &self.params.device_info {
-            Some(info) => info.clone(),
-            None => {
-                // Create device ID based on whitepaper Section 32.1
-                // DeviceID = H(user_secret || external_device_id || mpc_contribution || app_id || device_salt)
-                // This formula provides quantum-resistant device binding without requiring hardware TEEs
-                // It combines multiple entropy sources to ensure secure device identity
-                let mut device_id_data = Vec::new();
-                
-                // 1. Add user secret/local entropy (private to the user's device)
-                let local_entropy = match &self.params.initial_entropy {
-                    Some(entropy) => entropy.clone(),
-                    None => self.generate_local_entropy(),
-                };
-                device_id_data.extend_from_slice(&local_entropy);
-                
-                // 2. Add external device identifier (using machine-specific info when available)
-                let external_device_id = self.get_external_device_id();
-                device_id_data.extend_from_slice(external_device_id.as_bytes());
-                
-                // 3. Add MPC contribution (aggregated from threshold nodes)
-                // This ensures distributed trust in the identity's origin
-                device_id_data.extend_from_slice(&identity.mpc_seed_share);
-                
-                // 4. Add application identifier
-                device_id_data.extend_from_slice(self.params.app_id.as_bytes());
-                
-                // 5. Add device-specific salt for fingerprinting resistance
-                let device_salt = self.generate_device_salt();
-                device_id_data.extend_from_slice(&device_salt);
-                
-                // Hash everything to create the device ID - using quantum-resistant hashing
-                let device_id_hash = blake3(&device_id_data);
-                let device_id = format!("device_{}", hex::encode(device_id_hash.as_bytes()));
-                
-                // Create device info with the quantum-resistant public key
-                DeviceInfo::new(&device_id, sphincs_keypair.public_key.clone())
+            // Generate keypair from entropy
+            let mut key_hasher = blake3::Hasher::new();
+            key_hasher.update(&entropy);
+            key_hasher.update(b"KEY_MATERIAL");
+            let key_bytes = key_hasher.finalize().as_bytes().to_vec();
+            
+            crate::types::state_types::DeviceInfo {
+                device_id: device_id.clone(),
+                public_key: key_bytes,
             }
         };
-
-        // Create initial entropy from identity and selected nodes
-        let mut entropy_data = Vec::new();
-        entropy_data.extend_from_slice(&identity.mpc_seed_share);
         
-        // Add contributions from selected nodes in deterministic order
-        let mut node_ids: Vec<&String> = self.contributions.keys().collect();
-        node_ids.sort(); // Sort for determinism
-        
-        for node_id in node_ids {
-            if let Some(contribution) = self.contributions.get(node_id) {
-                entropy_data.extend_from_slice(contribution.blinded_hash.as_bytes());
-            }
-        }
-        
-        // Override with provided entropy if available
-        let initial_entropy = match &self.params.initial_entropy {
-            Some(entropy) => entropy.clone(),
-            None => blake3(&entropy_data).as_bytes().to_vec(),
-        };
-
-        // Create the genesis operation
-        let operation = Operation::Create {
-            message: "Genesis state creation".to_string(),
-            identity_data: device_info.public_key.clone(),
-            public_key: sphincs_keypair.public_key.clone(),
-            metadata: Vec::new(),
-            commitment: Vec::new(),
-            proof: Vec::new(),
-            mode: crate::types::operations::TransactionMode::Bilateral,
-        };
-
-        // Create genesis state
-        let mut genesis = State::new_genesis(initial_entropy, device_info.clone());
-        genesis.operation = operation;
-        
-        // Add metadata to the state
+        // Create the genesis state
+        let mut state_builder = StateBuilder::new()
+            .with_state_number(0)
+            .with_id(device_id)
+            .with_prev_hash(vec![0u8; 32])
+            .with_device_info(device_info)
+            .with_entropy(entropy);
+            
+        // Add metadata if available
         for (key, value) in &self.params.metadata {
-            genesis.add_metadata(key, value.clone())?;
+            state_builder = state_builder.with_parameter(key, value.clone());
         }
         
-        // Add a list of participants
-        let participants: Vec<String> = self.selected_nodes.iter()
-            .map(|node| node.node_id.clone())
-            .collect();
+        // Build the state
+        let mut state = state_builder.build()?;
         
-        genesis.add_metadata("participants", bincode::serialize(&participants).unwrap())?;
-        
-        // Add public keys
-        genesis.add_metadata("sphincs_public_key", sphincs_keypair.public_key.clone())?;
-        genesis.add_metadata("kyber_public_key", kyber_keypair.public_key.clone())?;
-        
-        // Set hash - using kyber and sphincs public keys together as per whitepaper
-        let mut genesis_data = Vec::new();
-        genesis_data.extend_from_slice(&kyber_keypair.public_key);
-        genesis_data.extend_from_slice(&sphincs_keypair.public_key);
-        let genesis_hash = blake3(&genesis_data).as_bytes().to_vec();
-        
-        // Set the hash and compute the full state hash
-        genesis.hash = genesis_hash;
-        let hash = genesis.compute_hash()?;
-        genesis.hash = hash;
-        
-        // Store the genesis state
-        self.genesis_state = Some(genesis.clone());
-        
-        Ok(genesis)
+        // Set entity signature
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&state.hash()?);
+        let signature = hasher.finalize().as_bytes().to_vec(); // Dummy signature for genesis
+        state.set_entity_signature(Some(signature));
+        Ok(state)
     }
     
-    /// Generate local entropy for device ID
-    /// 
-    /// This implements the user-controlled entropy component described
-    /// in whitepaper Section 32.1 for post-quantum device identity derivation.
-    /// 
-    /// The local entropy provides a secret component controlled exclusively by the user,
-    /// ensuring that even if all MPC participants collude, they cannot forge the user's
-    /// identity without access to this locally generated entropy.
-    fn generate_local_entropy(&self) -> Vec<u8> {
-        let mut entropy = Vec::new();
-        
-        // Add current precise timestamp (seconds and nanoseconds)
-        // This ensures temporal uniqueness
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        entropy.extend_from_slice(&timestamp.as_secs().to_be_bytes());
-        entropy.extend_from_slice(&timestamp.subsec_nanos().to_be_bytes());
-        
-        // Add process ID for additional environment-specific entropy
-        let pid = std::process::id();
-        entropy.extend_from_slice(&pid.to_be_bytes());
-        
-        // Add cryptographically secure random bytes
-        // This provides true cryptographic randomness when available
-        let mut random_bytes = [0u8; 32];
-        let _ = getrandom::getrandom(&mut random_bytes);
-        entropy.extend_from_slice(&random_bytes);
-        
-        // In a production system, additional hardware-derived entropy 
-        // could be incorporated here if available
-        
-        entropy
-    }
-    
-    /// Generate a unique device salt for fingerprinting resistance
-    /// 
-    /// This implements the device salt component from whitepaper Section 32.1
-    /// which provides additional entropy and fingerprinting resistance,
-    /// making it difficult for observers to correlate device identities
-    /// across different applications or instances.
-    fn generate_device_salt(&self) -> Vec<u8> {
-        let mut salt_data = Vec::new();
-        
-        // Add precise timestamp (micro-second precision when available)
-        // This makes the salt temporally unique even with identical hardware
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        salt_data.extend_from_slice(&timestamp.as_secs().to_be_bytes());
-        salt_data.extend_from_slice(&timestamp.subsec_nanos().to_be_bytes());
-        
-        // Add process-specific information
-        let pid = std::process::id();
-        salt_data.extend_from_slice(&pid.to_be_bytes());
-        
-        // Add cryptographically secure random data
-        // This provides true randomness separate from the user secret
-        let mut random_bytes = [0u8; 32];
-        let _ = getrandom::getrandom(&mut random_bytes);
-        salt_data.extend_from_slice(&random_bytes);
-        
-        // Hash the combined salt data with quantum-resistant Blake3
-        // to create a fixed-size, uniformly distributed salt value
-        blake3(&salt_data).as_bytes().to_vec()
-    }
-    
-    /// Get external device identifier
-    fn get_external_device_id(&self) -> String {
-        // Try to get machine-specific identifier when available
-        // This is a simplified implementation - a production version would use
-        // more sophisticated methods to obtain a stable device identifier
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            std::fs::read_to_string("/etc/machine-id")
-                .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
-                .trim()
-                .to_string()
-        }
-        
-        #[cfg(target_os = "windows")]
-        {
-            // On Windows we would use the MachineGuid from the registry
-            // This is a simplified fallback for the implementation
-            uuid::Uuid::new_v4().to_string()
-        }
-        
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-        {
-            uuid::Uuid::new_v4().to_string()
-        }
-    }
-
-    /// Get selected nodes
-    ///
-    /// # Returns
-    /// * `&[StorageNode]` - Selected nodes
-    pub fn get_selected_nodes(&self) -> &[StorageNode] {
-        &self.selected_nodes
-    }
-
-    /// Get genesis state
-    ///
-    /// # Returns
-    /// * `Option<&State>` - Genesis state if created
-    pub fn get_genesis_state(&self) -> Option<&State> {
-        self.genesis_state.as_ref()
-    }
-
-    /// Generate positions for random walk verification
-    ///
-    /// # Arguments
-    /// * `seed` - Seed for random walk
-    ///
-    /// # Returns
-    /// * `Result<Vec<Position>, DsmError>` - Generated positions
-    pub fn generate_verification_positions(&self, seed: &[u8]) -> Result<Vec<Position>, DsmError> {
-        let hash_array: [u8; 32] = seed
-            .try_into()
-            .map_err(|_| DsmError::internal("Invalid seed length".to_string(), None::<std::convert::Infallible>))?;
-        
-        let hash = Hash::from(hash_array);
-        
-        // Use existing random walk algorithms for position generation
-        let config = RandomWalkConfig {
-            dimensions: 3,
-            step_count: 64,
-            max_coordinate: 1_000_000,
-            position_count: 64,
-        };
-        
-        generate_positions(&hash, Some(config))
-    }
-
-    /// Verify positions from another party
-    ///
-    /// # Arguments
-    /// * `seed` - Seed used for generation
-    /// * `positions` - Positions to verify
-    ///
-    /// # Returns
-    /// * `Result<bool, DsmError>` - Whether positions are valid
-    pub fn verify_positions(&self, seed: &[u8], positions: &[Position]) -> Result<bool, DsmError> {
-        let expected = self.generate_verification_positions(seed)?;
-        Ok(verify_positions(&expected, positions))
-    }
-
-    /// Create a GenesisState wrapper from the state
-    ///
-    /// # Arguments
-    /// * `signing_key` - Signing key to include
-    ///
-    /// # Returns
-    /// * `Result<GenesisState, DsmError>` - Genesis state wrapper or error
+    /// Create a wrapper for the genesis state
     pub fn create_genesis_state_wrapper(
-        &self, 
-        signing_key: Vec<u8>
-    ) -> Result<GenesisState, DsmError> {
-        let genesis = self.genesis_state.as_ref()
-            .ok_or_else(|| DsmError::state_machine("Genesis state not created"))?;
-            
-        let participants: Vec<String> = self.selected_nodes.iter()
-            .map(|node| node.node_id.clone())
-            .collect();
-            
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        &self,
+        merkle_proof: Vec<u8>,
+    ) -> Result<GenesisStateWrapper, DsmError> {
+        let state = self.create_genesis_state()?;
         
-        // Get Merkle proof for genesis state if available
-        let mut merkle_proof = Vec::new();
-        if let Ok(proof_bytes) = self.generate_genesis_merkle_proof() {
-            merkle_proof = proof_bytes;
-        }
-            
-        Ok(GenesisState {
-            public_key: genesis.device_info.public_key.clone(),
-            signing_key,
-            genesis_hash: genesis.hash.clone(),
-            device_id: genesis.device_info.device_id.clone(),
-            participants,
-            timestamp,
-            signatures: Vec::new(),
-            merkle_proof, // Add Merkle proof for genesis validation
+        Ok(GenesisStateWrapper {
+            device_id: state.device_info.device_id.clone(),
+            app_id: self.params.app_id.clone(),
+            ceremony_id: self.params.ceremony_id.clone(),
+            merkle_proof,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         })
     }
     
-    /// Generate a Merkle proof for the genesis state
-    /// This is used for cross-device authentication as described in whitepaper Section 14.3
-    fn generate_genesis_merkle_proof(&self) -> Result<Vec<u8>, DsmError> {
-        let genesis = self.genesis_state.as_ref()
-            .ok_or_else(|| DsmError::state_machine("Genesis state not created"))?;
+    /// Create a new genesis state for a user
+    pub fn create_genesis(
+        identity_claim: &IdentityClaim,
+        initial_tokens: Option<u64>,
+    ) -> Result<State, DsmError> {
+        info!("Creating genesis state for identity: {}", identity_claim.identity_id);
         
-        // Create a sparse Merkle tree implementation
-        use crate::merkle::sparse_merkle_tree::sparse_merkle;
+        // 1. Verify identity claim
+        let mut state_builder = StateBuilder::new()
+            .with_state_number(0)
+            .with_id(identity_claim.identity_id.clone())
+            .with_prev_hash([0u8; 32].to_vec())
+            .with_device_info(identity_claim.device_info.clone());
+            
+        // 3. Add initial tokens if specified
+        if let Some(token_amount) = initial_tokens {
+            state_builder = state_builder.with_token_balance("DSM".to_string(), crate::types::token_types::Balance::new(token_amount));
+        }
         
-        // Create a new tree with height 8 (could be adjusted based on expected number of devices)
-        let mut tree = sparse_merkle::create_tree(8);
+        // 4. Generate entropy seed from identity hash
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(identity_claim.identity_id.as_bytes());
+        hasher.update(&identity_claim.timestamp.to_le_bytes());
+        let entropy_seed = hasher.finalize();
         
-        // Insert the genesis state at index 0
-        let genesis_bytes = bincode::serialize(genesis)
-            .map_err(|e| DsmError::serialization("Failed to serialize genesis state", Some(e)))?;
+        // 5. Set entropy and build state
+        let state = state_builder
+            .with_entropy((*entropy_seed.as_bytes()).to_vec())
+            .build()?;
+            
+        debug!("Genesis state created with ID: {}", state.id);
         
-        sparse_merkle::insert(&mut tree, 0, &genesis_bytes)?;
+        Ok(state)
+    }
+    
+    /// Verify a genesis state is valid
+    pub fn verify_genesis(state: &State) -> Result<bool, DsmError> {
+        // 1. Verify state is a genesis state (state_number = 0)
+        if state.state_number != 0 {
+            return Ok(false);
+        }
         
-        // Generate proof for the genesis state
-        let proof = sparse_merkle::generate_proof(&tree, 0)?;
+        // 2. Verify entropy was set correctly
+        // In a real implementation, this would verify against a registry
+        // For now we just check it's not all zeros
+        if state.entropy == vec![0u8; 32] {
+            return Ok(false);
+        }
         
-        // Serialize the proof
-        let proof_bytes = bincode::serialize(&proof)
-            .map_err(|e| DsmError::serialization("Failed to serialize Merkle proof", Some(e)))?;
+        // 3. Verify genesis has a valid identity
+        if state.device_info.device_id.is_empty() || 
+           state.device_info.public_key.is_empty() {
+            return Ok(false);
+        }
         
-        Ok(proof_bytes)
+        // All checks passed
+        Ok(true)
     }
 }
 

@@ -1,11 +1,61 @@
+//! # Core SDK Module
+//!
+//! This module provides the foundational interface for the DSM system, implementing
+//! the core mathematical principles described in the DSM whitepaper. It serves as the
+//! primary entry point for applications interacting with the DSM system and 
+//! orchestrates operations across all subsystems.
+//!
+//! The Core SDK integrates:
+//! 
+//! * **Hash Chain Management**: State evolution and verification
+//! * **Identity Management**: Cryptographic identity creation and device management
+//! * **State Machine**: Deterministic state transitions
+//! * **Token Operations**: Balance tracking and operations
+//!
+//! ## Architecture
+//!
+//! The Core SDK follows the mathematical blueprint laid out in the DSM whitepaper:
+//!
+//! * Section 2: Deterministic state transitions (Sn+1 = H(Sn∥opn+1))
+//! * Section 3: Token conservation principles
+//! * Section 4: Genesis state requirements
+//! * Section 5: Hash chain integrity
+//! * Section 6: System-wide verification
+//! * Section 7: Identity management
+//!
+//! ## Usage Example
+//!
+//! ```rust
+//! use dsm_sdk::core_sdk::CoreSDK;
+//! use dsm::types::error::DsmError;
+//! use dsm::types::state_types::{DeviceInfo, State};
+//!
+//! async fn example() -> Result<(), DsmError> {
+//!     // Initialize the core SDK
+//!     let sdk = CoreSDK::new();
+//!
+//!     // Create a device identity
+//!     let device_info = DeviceInfo::new("my_device", vec![1, 2, 3, 4]);
+//!     
+//!     // Create an initial state
+//!     let genesis = sdk.create_initial_state(&device_info)?;
+//!     
+//!     // Initialize the system with the genesis state
+//!     sdk.initialize_with_genesis(genesis).await?;
+//!     
+//!     // Create and execute a generic operation
+//!     let operation = sdk.generic_operation("test", vec![1, 2, 3])?;
+//!     let new_state = sdk.execute_transition(operation).await?;
+//!     
+//!     // Verify system integrity
+//!     let integrity = sdk.verify_system_integrity().await?;
+//!     assert!(integrity);
+//!     
+//!     Ok(())
+//! }
+//! ```
 use super::identity_sdk::IdentitySDK;
 use async_trait::async_trait;
-/// Core SDK Module
-///
-/// This module provides the foundational SDK interface for the DSM system,
-/// implementing the core mathematical principles from the blueprint.
-/// It serves as the primary entry point for applications interacting with the DSM
-/// system and orchestrates operations across all subsystems.
 use dsm::types::state_types::StateParams;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -17,36 +67,90 @@ use dsm::types::operations::{Operation, TransactionMode};
 use dsm::types::state_types::{DeviceInfo, State};
 use dsm::types::token_types::{Balance, TokenOperation};
 
-/// Token management functionality as defined in section 3 of the blueprint
+/// Token management functionality as defined in the DSM whitepaper
+///
+/// This trait defines the interface for token operations within the DSM system,
+/// focusing on balance tracking, atomic operations, and conservation principles
+/// as described in section 3 of the DSM whitepaper.
 #[async_trait]
 pub trait TokenManager: Send + Sync {
-    /// Get the current token balance (Bn in section 3 of blueprint)
+    /// Get the current token balance (Bn in whitepaper section 3)
+    ///
+    /// Returns the current balance for the active identity.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Balance)` - The current token balance if successful
+    /// * `Err(DsmError)` - If the balance couldn't be retrieved
     async fn get_balance(&self) -> Result<Balance, DsmError>;
 
-    /// Perform a token operation that updates balances atomically (following Bn+1 = Bn + Δn+1 rule)
+    /// Perform a token operation that updates balances atomically
+    ///
+    /// This follows the Bn+1 = Bn + Δn+1 rule from the whitepaper,
+    /// ensuring that token operations modify balances in a consistent way.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The token operation to execute
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(State)` - The new state after the operation if successful
+    /// * `Err(DsmError)` - If the operation couldn't be executed
     async fn execute_token_operation(&self, operation: TokenOperation) -> Result<State, DsmError>;
 
-    /// Validate token conservation ensuring sum(Δi) ≤ Bn as in section 3 of blueprint
+    /// Validate token conservation ensuring sum(Δi) ≤ Bn
+    ///
+    /// This method verifies that the token conservation principle from
+    /// whitepaper section 3 holds true across all state transitions.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if token conservation holds, false otherwise
+    /// * `Err(DsmError)` - If validation couldn't be performed
     async fn validate_token_conservation(&self) -> Result<bool, DsmError>;
 }
 
-/// Core SDK that integrates all DSM subsystems according to the mathematical blueprint
+/// Core SDK for the DSM system integrating all subsystems
+///
+/// This struct serves as the main entry point for applications using the DSM system.
+/// It coordinates between the various subsystems (hash chain, identity management,
+/// state machine, token operations) to provide a unified interface following the
+/// mathematical principles outlined in the DSM whitepaper.
 pub struct CoreSDK {
-    /// Hash chain component handling state evolution as per sections 2 & 5 of blueprint
+    /// Hash chain component handling state evolution as per whitepaper sections 2 & 5
     hash_chain_sdk: Arc<HashChainSDK>,
 
-    /// Identity component managing device-specific states as per sections 4 & 7 of blueprint
+    /// Identity component managing device-specific states as per whitepaper sections 4 & 7
     identity_sdk: Arc<IdentitySDK>,
 
-    /// State machine for deterministic state transitions as per section 2 of blueprint
+    /// State machine for deterministic state transitions as per whitepaper section 2
     state_machine: Arc<RwLock<StateMachine>>,
     
-    /// Token manager for token operations
+    /// Token manager for token operations as per whitepaper section 3
     token_manager: RwLock<Option<Arc<dyn TokenManager>>>,
 }
 
 impl CoreSDK {
-    /// Create a new CoreSDK instance with shared components
+    /// Create a new CoreSDK instance with default components
+    ///
+    /// This initializes the Core SDK with shared components:
+    /// - A hash chain SDK for state tracking
+    /// - A state machine for handling transitions
+    /// - An identity SDK for managing identities
+    ///
+    /// # Returns
+    ///
+    /// A new CoreSDK instance ready for use
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    ///
+    /// // Create a new SDK instance
+    /// let sdk = CoreSDK::new();
+    /// ```
     pub fn new() -> Self {
         // Create shared state machine and hash chain components first
         let hash_chain_sdk = Arc::new(HashChainSDK::new());
@@ -67,12 +171,61 @@ impl CoreSDK {
     }
     
     /// Register a token manager implementation
+    ///
+    /// This associates a TokenManager implementation with the Core SDK,
+    /// enabling token-related operations as described in whitepaper section 3.
+    ///
+    /// # Arguments
+    ///
+    /// * `manager` - An Arc-wrapped implementation of the TokenManager trait
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::{CoreSDK, TokenManager};
+    /// use std::sync::Arc;
+    ///
+    /// // Assuming MyTokenManager implements TokenManager
+    /// let sdk = CoreSDK::new();
+    /// let token_manager = Arc::new(MyTokenManager::new());
+    /// sdk.register_token_manager(token_manager);
+    /// ```
     pub fn register_token_manager<T: TokenManager + 'static>(&self, manager: Arc<T>) {
         let mut token_manager = self.token_manager.write();
         *token_manager = Some(manager);
     }
 
-    /// Initialize the system with a genesis state (G in section 4 of blueprint)
+    /// Initialize the system with a genesis state
+    ///
+    /// This sets up the initial genesis state (G) as described in whitepaper section 4.
+    /// The genesis state serves as the foundation for all subsequent state transitions.
+    ///
+    /// # Arguments
+    ///
+    /// * `genesis_state` - The genesis state (must have state_number = 0)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If initialization was successful
+    /// * `Err(DsmError)` - If the genesis state is invalid or initialization failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use dsm::types::state_types::{DeviceInfo, State};
+    ///
+    /// async fn example() {
+    ///     let sdk = CoreSDK::new();
+    ///     let device_info = DeviceInfo::new("device_id", vec![1, 2, 3, 4]);
+    ///     
+    ///     // Create genesis state
+    ///     let genesis = sdk.create_initial_state(&device_info).unwrap();
+    ///     
+    ///     // Initialize with genesis
+    ///     sdk.initialize_with_genesis(genesis).await.unwrap();
+    /// }
+    /// ```
     pub async fn initialize_with_genesis(&self, genesis_state: State) -> Result<(), DsmError> {
         // Validate the genesis state according to section 4 requirements
         if genesis_state.state_number != 0 {
@@ -95,7 +248,26 @@ impl CoreSDK {
         Ok(())
     }
 
-    /// Verify the entire state chain per section 6 of blueprint
+    /// Verify the entire system's integrity
+    ///
+    /// This performs a comprehensive verification of the system as described in
+    /// whitepaper section 6, checking both hash chain integrity and token conservation.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if the system integrity is verified, false otherwise
+    /// * `Err(DsmError)` - If verification couldn't be performed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    ///
+    /// async fn verify_system(sdk: &CoreSDK) {
+    ///     let integrity = sdk.verify_system_integrity().await.unwrap();
+    ///     assert!(integrity, "System integrity check failed");
+    /// }
+    /// ```
     pub async fn verify_system_integrity(&self) -> Result<bool, DsmError> {
         // Verify the hash chain integrity
         let chain_integrity = self.hash_chain_sdk.verify_chain()?;
@@ -107,7 +279,15 @@ impl CoreSDK {
         Ok(chain_integrity && token_conservation)
     }
 
-    /// Verify token conservation as per section 3 of blueprint
+    /// Verify token conservation principles
+    ///
+    /// This checks that token conservation principles from whitepaper section 3
+    /// are maintained throughout the system.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if token conservation is verified, false otherwise
+    /// * `Err(DsmError)` - If verification couldn't be performed
     pub async fn verify_token_conservation(&self) -> Result<bool, DsmError> {
         // Clone the Arc<dyn TokenManager> while holding the lock briefly
         let manager_clone = {
@@ -126,16 +306,36 @@ impl CoreSDK {
     }
 
     /// Get access to the hash chain SDK component
+    ///
+    /// # Returns
+    ///
+    /// An Arc-wrapped reference to the HashChainSDK
     pub fn hash_chain_sdk(&self) -> Arc<HashChainSDK> {
         self.hash_chain_sdk.clone()
     }
 
     /// Get access to the identity SDK component
+    ///
+    /// # Returns
+    ///
+    /// An Arc-wrapped reference to the IdentitySDK
     pub fn identity_sdk(&self) -> Arc<IdentitySDK> {
         self.identity_sdk.clone()
     }
 
-    /// Create a identity-based operation
+    /// Create an identity-based operation
+    ///
+    /// Creates an operation for establishing or updating identity data
+    /// in the DSM system.
+    ///
+    /// # Arguments
+    ///
+    /// * `identity_data` - The identity data to include in the operation
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The created operation if successful
+    /// * `Err(DsmError)` - If operation creation failed
     pub fn create_operation_with_identity(
         &self,
         identity_data: Vec<u8>,
@@ -152,6 +352,13 @@ impl CoreSDK {
     }
 
     /// Create an update operation
+    ///
+    /// Creates an operation for updating state in the DSM system.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The created update operation if successful
+    /// * `Err(DsmError)` - If operation creation failed
     pub fn update_operation(&self) -> Result<Operation, DsmError> {
         Ok(Operation::Update {
             message: "Update state".to_string(),
@@ -163,6 +370,29 @@ impl CoreSDK {
     }
 
     /// Create a generic operation
+    ///
+    /// Creates a generic operation with the specified type and data.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation_type` - The type of operation to create
+    /// * `data` - The data to include in the operation
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The created generic operation if successful
+    /// * `Err(DsmError)` - If operation creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    ///
+    /// fn create_test_op(sdk: &CoreSDK) {
+    ///     let op = sdk.generic_operation("test", vec![1, 2, 3]).unwrap();
+    ///     // Use operation for state transition
+    /// }
+    /// ```
     pub fn generic_operation(
         &self,
         operation_type: &str,
@@ -176,17 +406,62 @@ impl CoreSDK {
     }
 
     /// Get the current state
+    ///
+    /// Retrieves the most recent state in the system.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(State)` - The current state if available
+    /// * `Err(DsmError)` - If no current state exists or retrieval failed
     pub fn get_current_state(&self) -> Result<State, DsmError> {
         let current_state = self.hash_chain_sdk.current_state();
         current_state.ok_or_else(|| DsmError::state("No current state available"))
     }
 
     /// Get a historical state by its state number
+    ///
+    /// Retrieves a specific state from the hash chain by its sequence number.
+    ///
+    /// # Arguments
+    ///
+    /// * `state_number` - The sequence number of the state to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(State)` - The requested state if found
+    /// * `Err(DsmError)` - If the state doesn't exist or retrieval failed
     pub fn get_state_by_number(&self, state_number: u64) -> Result<State, DsmError> {
         self.hash_chain_sdk.get_state_by_number(state_number)
     }
 
-    /// Execute a state transition following deterministic rules in section 2 of blueprint
+    /// Execute a state transition
+    ///
+    /// Performs a deterministic state transition as described in whitepaper section 2,
+    /// following the formula Sn+1 = H(Sn∥opn+1).
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The operation to execute in the transition
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(State)` - The new state resulting from the transition
+    /// * `Err(DsmError)` - If the transition failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    ///
+    /// async fn example(sdk: &CoreSDK) {
+    ///     // Create a generic operation
+    ///     let op = sdk.generic_operation("test", vec![1, 2, 3]).unwrap();
+    ///     
+    ///     // Execute the transition
+    ///     let new_state = sdk.execute_transition(op).await.unwrap();
+    ///     println!("New state number: {}", new_state.state_number);
+    /// }
+    /// ```
     pub async fn execute_transition(&self, operation: Operation) -> Result<State, DsmError> {
         // Execute the transition in the state machine (deterministic evolution as per Sn+1 = H(Sn∥opn+1))
         let new_state = {
@@ -199,7 +474,33 @@ impl CoreSDK {
 
         Ok(new_state)
     }
-    /// Create initial state
+
+    /// Create an initial (genesis) state
+    ///
+    /// Creates a genesis state (G) as described in whitepaper section 4,
+    /// which serves as the foundation for the state chain.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_info` - Information about the device creating the genesis state
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(State)` - The created genesis state if successful
+    /// * `Err(DsmError)` - If genesis state creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use dsm::types::state_types::DeviceInfo;
+    ///
+    /// fn create_genesis(sdk: &CoreSDK) {
+    ///     let device_info = DeviceInfo::new("device_id", vec![1, 2, 3, 4]);
+    ///     let genesis = sdk.create_initial_state(&device_info).unwrap();
+    ///     // Use genesis state to initialize system
+    /// }
+    /// ```
     pub fn create_initial_state(&self, device_info: &DeviceInfo) -> Result<State, DsmError> {
         let operation = Operation::Create {
             message: "Initial state creation".to_string(),
@@ -225,6 +526,10 @@ impl CoreSDK {
         Ok(State::new(params))
     }
 }
+
+/// Implements the Default trait for CoreSDK
+///
+/// This allows creating a CoreSDK instance using Default::default()
 impl Default for CoreSDK {
     fn default() -> Self {
         Self::new()

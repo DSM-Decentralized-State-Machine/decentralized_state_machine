@@ -1,3 +1,22 @@
+//! # DSM Cryptography Module
+//!
+//! This module provides cryptographic primitives and operations for the DSM system, including:
+//!
+//! * Post-quantum secure encryption using Kyber
+//! * Post-quantum secure signatures using SPHINCS+
+//! * Hash functions (Blake3, SHA3)
+//! * Pedersen commitments
+//! * Secure RNG utilities
+//! * Privacy-preserving random walks
+//!
+//! The module implements a hybrid encryption approach using post-quantum algorithms combined
+//! with symmetric encryption (ChaCha20Poly1305) for data protection.
+//!
+//! ## Security Notice
+//!
+//! The current implementation uses a simple in-memory key store for development purposes.
+//! In production, this would be replaced with secure storage (HSM, TEE, etc.).
+
 use crate::types::error::DsmError;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
@@ -8,7 +27,6 @@ use std::sync::Mutex;
 use tracing::{debug, warn};
 
 pub mod blake3;
-pub mod cryptographic_verification;
 pub mod hash;
 pub mod kyber;
 pub mod pedersen;
@@ -25,6 +43,18 @@ lazy_static::lazy_static! {
 }
 
 /// Stores a private key securely
+///
+/// In development, stores the key in memory. In production, this would use
+/// hardware security modules or trusted execution environments.
+///
+/// # Arguments
+///
+/// * `id` - Identifier for the key
+/// * `private_key` - The private key data to store
+///
+/// # Returns
+///
+/// Result indicating success or storage error
 pub fn store_private_key(id: &str, private_key: &[u8]) -> Result<(), DsmError> {
     debug!("Storing private key for ID: {}", id);
     let mut store = PRIVATE_KEY_STORE.lock().map_err(|_| {

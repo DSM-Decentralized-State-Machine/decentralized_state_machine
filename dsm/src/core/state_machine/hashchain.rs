@@ -149,7 +149,7 @@ pub struct HashChain {
     /// Current batch counter
 
     /// Cached transitions for batches
-    /// Key: batch_id, Value: Vec<StateTransition>
+    /// Key: batch_id, Value: `Vec<StateTransition>`
     cached_transitions: HashMap<u64, Vec<StateTransition>>,
 
     /// Next batch ID

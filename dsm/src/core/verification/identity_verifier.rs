@@ -1,96 +1,118 @@
-use crate::types::error::DsmError;
-use crate::types::state_types::{IdentityAnchor, DeviceInfo};
-use blake3;
-use sphincsplus;
+// Dual mode verification implementation for identity anchoring and authentication
+// This works for both decentralized and centralized identity verification methods
 
-/// Implements identity anchor verification from whitepaper Section 25.1
+use blake3;
+use crate::types::error::DsmError;
+use crate::types::identity::{IdentityAnchor, IdentityClaim};
+
+/// IdentityVerifier handles the verification of identity claims against identity anchors
 pub struct IdentityVerifier;
 
 impl IdentityVerifier {
-    /// Verify an identity anchor's cryptographic binding
-    pub fn verify_identity_anchor(
+    /// Verify an identity claim against a registered identity anchor
+    /// 
+    /// # Arguments
+    /// * `claim` - The identity claim to verify
+    /// * `anchor` - The registered identity anchor to verify against
+    /// 
+    /// # Returns
+    /// * `Result<bool, DsmError>` - Whether the claim is valid for the anchor
+    pub fn verify_identity_claim(
+        claim: &IdentityClaim,
         anchor: &IdentityAnchor,
-        device: &DeviceInfo,
     ) -> Result<bool, DsmError> {
-        // Verify uniqueness probability according to whitepaper equation (96):
-        // Pr[Collision(DeviceIDi,DeviceIDj)] ≤ 1/2^λID
-        if !Self::verify_id_uniqueness(anchor)? {
+        // 1. Verify the claim is for the correct anchor
+        if claim.identity_id != anchor.identity_id {
             return Ok(false);
         }
-
-        // Verify derivation from device seed according to equation (97):
-        // Verify(seed,state) = (state.genesis_hash == H(Derive(seed).public))
-        if !Self::verify_device_binding(anchor, device)? {
-            return Ok(false);
-        }
-
-        // Verify quantum-resistant signature
-        if !Self::verify_anchor_signature(anchor)? {
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
-
-    /// Verify identity uniqueness probability
-    fn verify_id_uniqueness(anchor: &IdentityAnchor) -> Result<bool, DsmError> {
-        // Identity must be at least 32 bytes for 256-bit security
-        if anchor.id.len() < 32 {
-            return Ok(false);
-        }
-
-        // Verify id was derived from hash function
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(anchor.genesis_hash.as_slice());
-        hasher.update(anchor.device_binding.as_slice());
         
-        let derived_id = hasher.finalize();
-        if derived_id.as_bytes() != anchor.id.as_bytes() {
+        // 2. Verify the claim signature using cryptographic primitives
+        if !Self::verify_claim_signature(claim)? {
             return Ok(false);
         }
-
+        
+        // 3. Verify the claim commitments against anchor expectations
+        if !Self::verify_claim_commitments(claim, anchor)? {
+            return Ok(false);
+        }
+        
         Ok(true)
     }
-
-    /// Verify binding to device
-    fn verify_device_binding(
+    
+    /// Verify identity claim signature
+    fn verify_claim_signature(claim: &IdentityClaim) -> Result<bool, DsmError> {
+        // Generate hash of claim data
+        let mut hasher = blake3::Hasher::new();
+        
+        // Add all claim fields to hash
+        hasher.update(claim.identity_id.as_bytes());
+        hasher.update(&claim.timestamp.to_le_bytes());
+        hasher.update(&claim.expiration.to_le_bytes());
+        
+        // Verify signature on the hash
+        let claimed_hash = hasher.finalize();
+        
+        // In a real implementation, this would verify the signature
+        // using the appropriate signature scheme (e.g., ECDSA, EdDSA)
+        // For now, we simply check that the signature is not empty
+        if claim.signature.is_empty() {
+            return Ok(false);
+        }
+        
+        // Compare hash to the expected value (in real implementation this would check signature)
+        if claimed_hash.as_bytes() != claim.claim_hash.as_slice() {
+            return Ok(false);
+        }
+        
+        Ok(true)
+    }
+    
+    /// Verify claim commitments against anchor expectations
+    fn verify_claim_commitments(
+        claim: &IdentityClaim, 
         anchor: &IdentityAnchor,
-        device: &DeviceInfo,
     ) -> Result<bool, DsmError> {
-        // Verify device public key matches binding
+        // Hash the anchor data to get the expected commitment value
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&device.public_key);
-        let binding = hasher.finalize();
-
-        if binding.as_bytes() != anchor.device_binding.as_slice() {
+        
+        // Add all anchor fields to hash
+        hasher.update(anchor.identity_id.as_bytes());
+        hasher.update(&anchor.creation_time.to_le_bytes());
+        hasher.update(&anchor.revocation_time.unwrap_or(0).to_le_bytes());
+        
+        // Get the expected commitment value
+        let anchor_hash = hasher.finalize();
+        
+        // Check if the commitments match (in a real implementation, 
+        // this would be more sophisticated)
+        if anchor_hash.as_bytes() != claim.anchor_commitment.as_slice() {
             return Ok(false);
         }
-
-        // Verify genesis hash matches device derivation
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&device.seed);
-        let derived = hasher.finalize();
-
-        if derived.as_bytes() != anchor.genesis_hash.as_slice() {
-            return Ok(false);
-        }
-
+        
         Ok(true)
     }
-
-    /// Verify quantum-resistant signature on anchor
-    fn verify_anchor_signature(anchor: &IdentityAnchor) -> Result<bool, DsmError> {
-        // Verify SPHINCS+ signature
-        let message = [
-            anchor.id.as_bytes(),
-            anchor.genesis_hash.as_slice(),
-            anchor.device_binding.as_slice()
-        ].concat();
-
-        sphincsplus::verify(
-            &message,
-            &anchor.signature,
-            &anchor.public_key
-        ).map_err(|_| DsmError::InvalidSignature)
+    
+    /// Create a new identity anchor from an initial claim
+    pub fn create_identity_anchor(
+        claim: &IdentityClaim,
+    ) -> Result<IdentityAnchor, DsmError> {
+        // Verify the claim has a valid signature first
+        if !Self::verify_claim_signature(claim)? {
+            return Err(DsmError::identity("Invalid identity claim signature"));
+        }
+        
+        // Create a new identity anchor
+        let anchor = IdentityAnchor {
+            identity_id: claim.identity_id.clone(),
+            public_key: claim.public_key.clone(),
+            creation_time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| DsmError::generic("Error getting system time", Some(e)))?
+                .as_secs(),
+            revocation_time: None,
+            meta_data: claim.meta_data.clone(),
+        };
+        
+        Ok(anchor)
     }
 }

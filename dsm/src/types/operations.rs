@@ -61,6 +61,9 @@ pub enum VerificationType {
     Enhanced,
     Bilateral,
     Directory,
+    StandardBilateral,
+    PreCommitted,
+    UnilateralIdentityAnchor,
     Custom(Vec<u8>),
 }
 

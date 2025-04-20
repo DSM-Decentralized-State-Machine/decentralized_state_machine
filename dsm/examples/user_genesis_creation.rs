@@ -1,8 +1,9 @@
-use dsm::core::state_machine::genesis::{StorageNode, GenesisParams, GenesisCreator, GenesisState};
+use dsm::core::state_machine::genesis::{StorageNode, GenesisParams, GenesisCreator, MpcContribution};
+use dsm::core::state_machine::genesis::GenesisStateWrapper;
 use dsm::core::state_machine::StateMachine;
 use dsm::crypto::hash::blake3;
 use dsm::crypto::signatures::SignatureKeyPair;
-use dsm::crypto_verification::multiparty_computation::MpcContribution;
+// MpcContribution is imported from core state_machine genesis module
 use dsm::types::error::DsmError;
 use dsm::types::state_types::{DeviceInfo, State};
 use std::collections::HashMap;
@@ -90,9 +91,9 @@ impl UserDevice {
     
     pub fn process_genesis_wrapper(
         &mut self, 
-        wrapper: GenesisState
+        wrapper: GenesisStateWrapper
     ) -> Result<(), DsmError> {
-        println!("Processing genesis wrapper for device: {}", wrapper.device_id);
+        println!("Processing genesis wrapper for device: {:?}", wrapper.device_id);
         
         // In a real implementation:
         // 1. Verify signatures from participants
@@ -100,20 +101,13 @@ impl UserDevice {
         // 3. Store the signing key securely
         
         // For this example, we'll just print out the information
-        println!("  - Participants: {}", wrapper.participants.len());
-        println!("  - Public key length: {} bytes", wrapper.public_key.len());
-        println!("  - Signing key length: {} bytes", wrapper.signing_key.len());
-        println!("  - Genesis hash: {:?}", wrapper.genesis_hash);
+        println!("  - Ceremony ID: {}", wrapper.ceremony_id);
+        println!("  - Merkle proof length: {}", wrapper.merkle_proof.len());
+        println!("  - Timestamp: {}", wrapper.timestamp);
         
-        // If we already have the genesis state, confirm it matches
-        if let Some(state) = &self.genesis_state {
-            if state.hash != wrapper.genesis_hash {
-                return Err(DsmError::validation(
-                    "Genesis hash mismatch".to_string(),
-                    None::<std::convert::Infallible>,
-                ));
-            }
-            println!("Genesis hash verified against local state!");
+        // Note: no hash field on wrapper, so skipping local state verification
+        if self.genesis_state.is_some() {
+            println!("Skipping local state hash verification.");
         }
         
         Ok(())

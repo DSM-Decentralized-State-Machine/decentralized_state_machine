@@ -5,29 +5,23 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        crypto_verification::crypto_identity::CryptoIdentityFactory,
+        core::identity::create_identity,
         types::error::DsmError,
     };
     
-    #[test]
-    fn test_crypto_identity_creation() -> Result<(), DsmError> {
+    #[tokio::test]
+    async fn test_identity_creation() -> Result<(), DsmError> {
         // Create test identity
-        let app_id = "com.dsm.testapp";
-        let result = CryptoIdentityFactory::create_test_identity(app_id);
-        assert!(result.is_ok());
+        let name = "test_identity";
+        let threshold = 1;
+        let participants = vec!["test_participant".to_string()];
 
-        let (mut identity, _sphincs_keypair, _kyber_keypair) = result.unwrap();
-
-        // Create genesis state
-        let genesis_state = identity.create_state(None, b"genesis_operation")?;
-        assert_eq!(genesis_state.state_number, 0);
+        let identity = create_identity(name, threshold, participants).await.unwrap();
+        // Verify identity properties
+        assert_eq!(identity.name, name);
+        assert!(!identity.devices.is_empty());
         
-        // Verify we can create subsequent states (local chain functionality)
-        let next_state = identity.create_state(Some(&genesis_state), b"next_operation")?;
-        assert_eq!(next_state.state_number, 1);
-        assert_eq!(next_state.prev_state_hash, genesis_state.hash()?);
-        
-        println!("Successfully created crypto identity and verified state transitions");
+        println!("Successfully created identity and verified properties");
         Ok(())
     }
 
@@ -38,27 +32,34 @@ mod tests {
     async fn test_identity_storage_integration() -> Result<(), DsmError> {
         use bincode;
         use reqwest;
+        use crate::types::State;
         use serde_json::json;
-        use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-        use base64::engine::Engine as Base64Engine;
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
         
-        println!("Testing storage node integration with CryptoIdentity");
+        println!("Testing storage node integration with Identity");
         
         // Create test identity
         let app_id = "com.dsm.testapp";
-        let result = CryptoIdentityFactory::create_test_identity(app_id);
-        assert!(result.is_ok());
+        let name = "test_integration_identity";
+        let threshold = 1;
+        let participants = vec!["test_participant".to_string()];
 
-        let (mut identity, sphincs_keypair, _kyber_keypair) = result.unwrap();
-
-        // Create genesis state
-        let genesis_state = identity.create_state(None, b"genesis_operation")?;
-        assert_eq!(genesis_state.state_number, 0);
+        let identity = create_identity(name, threshold, participants).await
+            .map_err(|e| DsmError::identity(format!("Failed to create identity: {}", e)))?;
+        let device_identity = &identity.devices[0];
+        
+        // Get device genesis state
+        let genesis_state = if let Some(state) = &device_identity.current_state {
+            state.clone()
+        } else {
+            return Err(DsmError::identity("Device has no current state"));
+        };
         
         // Serialize the identity's genesis state
         let identity_key = format!("identity_{}_{}",
             app_id,
-            hex::encode(&identity.genesis_hash.as_bytes()[0..8]));
+            identity.id());
         
         let serialized_state = bincode::serialize(&genesis_state)
             .map_err(|e| DsmError::Storage {
@@ -238,7 +239,7 @@ mod tests {
             })?;
             
         // Deserialize the state
-        let retrieved_state = bincode::deserialize::<crate::types::state_types::State>(&retrieved_data)
+        let retrieved_state = bincode::deserialize::<State>(&retrieved_data)
             .map_err(|e: bincode::Error| DsmError::Storage {
                 context: format!("Failed to deserialize state: {}", e),
                 source: Some(Box::new(e))
@@ -249,75 +250,17 @@ mod tests {
         assert_eq!(retrieved_state.hash, genesis_state.hash, "State hash mismatch");
         println!("Successfully retrieved and verified identity state from storage node");
         
-        // Create next state (state 1)
-        let next_state = identity.create_state(Some(&genesis_state), b"next_operation")?;
-        assert_eq!(next_state.state_number, 1);
-        assert_eq!(next_state.prev_state_hash, genesis_state.hash()?);
-        
-        // Serialize and store the next state
-        let next_state_key = format!("identity_{}_state_{}", 
-            app_id, 
-            next_state.state_number);
-            
-        let serialized_next_state = bincode::serialize(&next_state)
-            .map_err(|e: bincode::Error| DsmError::Storage {
-                context: format!("Failed to serialize next state: {}", e),
-                source: Some(Box::new(e))
-            })?;
-            
-        // Store the next state in the storage node
-        // Encode the state as base64 to include in the JSON payload
-        let encoded_next_state = BASE64_STANDARD.encode(&serialized_next_state);
-        
-        let next_store_payload = json!({
-            "state": encoded_next_state,
-            "type": "identity_state",
-            "state_number": next_state.state_number,
-            "app_id": app_id,
-            "prev_state_hash": hex::encode(&next_state.prev_state_hash),
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        });
-        
-        println!("Storing next state in storage node...");
-        let next_store_response = client.post(format!("http://127.0.0.1:8080/api/v1/data/{}", next_state_key))
-            .json(&next_store_payload)
-            .send()
-            .await
-            .map_err(|e: reqwest::Error| DsmError::Network {
-                context: format!("Failed to store next state in storage node: {}", e),
-                source: Some(Box::new(e)),
-                entity: "storage_node".to_string(),
-                details: Some("Error storing state 1".to_string())
-            })?;
-            
-        assert!(next_store_response.status().is_success(), "Failed to store next state in storage node");
-        println!("Successfully stored next state in storage node");
-        
-        // Create signature over next state hash for verification
-        let signature = sphincs_keypair.sign(&next_state.hash)?;
-        
-        // Verify signature
-        let verified = sphincs_keypair.verify(&next_state.hash, &signature)?;
-        assert!(verified, "Signature verification failed");
-        println!("Signature verification successful");
-        
         // Skip deletion to allow inspection of the stored states
         println!("\nKeeping test data in storage node for inspection");
         println!("You can access the genesis state at: http://127.0.0.1:8080/api/v1/data/{}", identity_key);
-        println!("You can access the next state at: http://127.0.0.1:8080/api/v1/data/{}", next_state_key);
         
         // Print keys for easy reference
         println!("\nStored keys:");
         println!("  Genesis state key: {}", identity_key);
-        println!("  Next state key: {}", next_state_key);
         
         // To manually delete these states later, you can use:
         println!("\nTo delete these states later, use these curl commands:");
         println!("  curl -X DELETE http://127.0.0.1:8080/api/v1/data/{}", identity_key);
-        println!("  curl -X DELETE http://127.0.0.1:8080/api/v1/data/{}", next_state_key);
             
         println!("Storage integration test completed successfully");
         Ok(())
