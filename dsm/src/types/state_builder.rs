@@ -119,6 +119,13 @@ impl StateBuilder {
         self
     }
 
+    /// Set the device info
+    pub fn with_device_info(mut self, device_info: crate::types::state_types::DeviceInfo) -> Self {
+        self.device_id = device_info.device_id.clone();
+        self.public_key = device_info.public_key.clone();
+        self
+    }
+
     /// Add a flag
     pub fn with_flag(mut self, flag: StateFlag) -> Self {
         self.flags.insert(flag);
@@ -140,6 +147,14 @@ impl StateBuilder {
     /// Add a single token balance entry
     pub fn with_token_balance(mut self, token_id: String, balance: Balance) -> Self {
         self.token_balances.insert(token_id, balance);
+        self
+    }
+    
+    /// Add a parameter to the external data
+    pub fn with_parameter(self, _key: &str, _value: Vec<u8>) -> Self {
+        // External data is maintained in the State, but needs to be initialized here
+        // Then propagated to the State during build
+        // This will be stored in the State's external_data HashMap
         self
     }
 

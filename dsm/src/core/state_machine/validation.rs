@@ -335,38 +335,25 @@ pub fn verify_state_transition(_state: &State, operation: &Operation) -> Result<
 
 #[cfg(test)]
 mod tests {
+    use crate::types::StateBuilder;
+
     use super::*;
-    use crate::types::state_types::StateParams;
 
     fn create_test_state_with_hash(state_number: u64, prev_hash: Vec<u8>) -> State {
         let device_info = DeviceInfo::new("test_device", vec![1, 2, 3, 4]);
-
-        let mut state = State::new(StateParams {
-            state_number,
-            entropy: vec![5, 6, 7, 8], // Test entropy
-            encapsulated_entropy: None,
-            prev_state_hash: prev_hash,
-            device_info,
-            forward_commitment: None,
-            operation: Operation::Generic {
+        let mut state = StateBuilder::new()
+            .with_state_number(state_number)
+            .with_entropy(vec![5, 6, 7, 8]) // Test entropy
+            .with_prev_hash(prev_hash)
+            .with_device_info(device_info)
+            .with_operation(Operation::Generic {
                 operation_type: "test".to_string(),
                 data: vec![],
                 message: "test".to_string(),
-            },
-            sparse_index: SparseIndex::new(vec![]),
-            matches_parameters: false,
-            state_type: "test".to_string(),
-            value: vec![0],
-            commitment: vec![],
-            previous_hash: vec![],
-            none_field: None,
-            metadata: vec![],
-            token_balance: None,
-            signature: Some(vec![]),
-            version: 0,
-            forward_link: None,
-            large_state: Box::new(State::default()),
-        });
+            })
+            .with_sparse_index(SparseIndex::new(vec![]))
+            .build()
+            .unwrap();
         state.hash = state.hash().unwrap(); // Compute and set the hash
         state
     }

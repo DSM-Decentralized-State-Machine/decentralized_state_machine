@@ -1,9 +1,14 @@
-use crate::types::error::DsmError;
-use crate::types::operations::{Operation, TransactionMode, VerificationType};
-use crate::types::state_types::{State, PreCommitment};
+// Consolidated DualModeVerifier implementation based on whitepaper Section 30
+// Handles both bilateral V(Sn,Sn+1,σA,σB) and unilateral Vuni(Sn,Sn+1,σA,Dverify(IDB)) modes.
 
-/// DualModeVerifier implements the verification predicates from whitepaper Section 23.
-/// It handles both bilateral V(Sn,Sn+1,σA,σB) and unilateral Vuni(Sn,Sn+1,σA,Dverify(IDB)) modes.
+use crate::core::entropy::DeterministicEntropy;
+use crate::types::error::DsmError;
+use crate::types::operations::{Operation, TransactionMode};
+use crate::types::state_types::{State, PreCommitment};
+use crate::types::token_types::Balance;
+use crate::crypto;
+
+/// DualModeVerifier implements the verification predicates from whitepaper Section 30
 pub struct DualModeVerifier;
 
 impl DualModeVerifier {
@@ -15,19 +20,21 @@ impl DualModeVerifier {
     ) -> Result<bool, DsmError> {
         // Get mode-specific validation logic
         match operation {
-            Operation::Transfer { mode, verification, .. } |
-            Operation::AddRelationship { mode, .. } |
-            Operation::RemoveRelationship { mode, .. } => {
+            Operation::Transfer { mode, .. } => {
                 match mode {
                     TransactionMode::Bilateral => {
                         // V(Sn,Sn+1,σA,σB) = true
-                        Self::verify_bilateral_mode(current_state, next_state, verification)
+                        Self::verify_bilateral_mode(current_state, next_state)
                     },
                     TransactionMode::Unilateral => {
                         // Vuni(Sn,Sn+1,σA,Dverify(IDB)) = true 
-                        Self::verify_unilateral_mode(current_state, next_state, verification)
+                        Self::verify_unilateral_mode(current_state, next_state)
                     }
                 }
+            },
+            Operation::RemoveRelationship { .. } => {
+                // For remove relationship, use basic transition verification
+                Self::verify_basic_transition(current_state, next_state)
             },
             _ => Self::verify_basic_transition(current_state, next_state)
         }
@@ -37,67 +44,74 @@ impl DualModeVerifier {
     fn verify_bilateral_mode(
         current_state: &State,
         next_state: &State,
-        verification: &VerificationType,
     ) -> Result<bool, DsmError> {
-        match verification {
-            VerificationType::StandardBilateral => {
-                // 1. Verify both signatures exist
-                if next_state.entity_signature.is_none() || 
-                   next_state.counterparty_signature.is_none() {
-                    return Ok(false); 
-                }
-
-                // 2. Verify signatures are valid for state transition
-                if !Self::verify_signatures(current_state, next_state)? {
-                    return Ok(false);
-                }
-
-                // 3. Verify state transition preserves invariants
-                Self::verify_transition_invariants(current_state, next_state)
-            },
-            VerificationType::PreCommitted => {
-                // Verify pre-commitment conditions are met
-                if let Some(commitment) = &current_state.forward_commitment {
-                    Self::verify_precommitment_adherence(commitment, next_state)
-                } else {
-                    Ok(false)
-                }
-            },
-            _ => Ok(false)
+        // 1. Verify both signatures exist
+        if next_state.entity_sig.is_none() || 
+           next_state.counterparty_sig.is_none() {
+            return Ok(false); 
         }
+
+        // 2. Verify signatures are valid for state transition
+        if !Self::verify_signatures(current_state, next_state)? {
+            return Ok(false);
+        }
+
+        // 3. Verify state transition preserves invariants
+        Self::verify_transition_invariants(current_state, next_state)
     }
 
     /// Verify unilateral mode transition according to whitepaper equation (88)
     fn verify_unilateral_mode(
         current_state: &State,
         next_state: &State,
-        verification: &VerificationType,
     ) -> Result<bool, DsmError> {
-        match verification {
-            VerificationType::UnilateralIdentityAnchor => {
-                // 1. Verify sender signature
-                if next_state.entity_signature.is_none() {
-                    return Ok(false);
-                }
-
-                // 2. Verify sender signature is valid
-                if !Self::verify_entity_signature(current_state, next_state)? {
-                    return Ok(false);
-                }
-
-                // 3. Verify recipient identity anchor exists in decentralized storage
-                if !Self::verify_recipient_identity(next_state)? {
-                    return Ok(false);
-                }
-
-                // 4. Verify state transition preserves invariants
-                Self::verify_transition_invariants(current_state, next_state)
-            },
-            _ => Ok(false)
+        // 1. Verify sender signature
+        if next_state.entity_sig.is_none() {
+            return Ok(false);
         }
+
+        // 2. Verify sender signature is valid
+        if !Self::verify_entity_signature(current_state, next_state)? {
+            return Ok(false);
+        }
+
+        // 3. Verify recipient identity anchor exists in decentralized storage
+        if !Self::verify_recipient_identity(next_state)? {
+            return Ok(false);
+        }
+
+        // 4. Verify state transition preserves invariants
+        Self::verify_transition_invariants(current_state, next_state)
     }
 
-    /// Verify transition preserves system invariants
+    /// Verify a batch of transitions
+    pub fn verify_transition_batch(states: &[State]) -> Result<bool, DsmError> {
+        if states.len() < 2 {
+            return Ok(true); // Nothing to verify with 0 or 1 states
+        }
+
+        // Verify each pair of consecutive states
+        for i in 0..(states.len() - 1) {
+            let prev = &states[i];
+            let next = &states[i + 1];
+
+            if !Self::verify_transition(prev, next, &next.operation)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Verify basic transition properties common to all operations
+    fn verify_basic_transition(
+        current_state: &State,
+        next_state: &State,
+    ) -> Result<bool, DsmError> {
+        // Delegate to transition invariants verification
+        Self::verify_transition_invariants(current_state, next_state)
+    }
+
     fn verify_transition_invariants(
         current_state: &State,
         next_state: &State,
@@ -117,7 +131,7 @@ impl DualModeVerifier {
             return Ok(false);
         }
 
-        // 4. Verify entropy evolution
+        // 4. Verify entropy evolution using the consolidated implementation
         if !Self::verify_entropy_evolution(current_state, next_state)? {
             return Ok(false);
         }
@@ -125,34 +139,87 @@ impl DualModeVerifier {
         Ok(true)
     }
 
-    /// Verify signatures in bilateral mode
     fn verify_signatures(
-        current_state: &State,
+        _current_state: &State,
         next_state: &State,
     ) -> Result<bool, DsmError> {
         // Verify both parties' signatures on state transition
-        // Implementation would verify cryptographic signatures
-        Ok(true) // Placeholder
+        if let (Some(entity_sig), Some(counterparty_sig)) = 
+            (&next_state.entity_sig, &next_state.counterparty_sig) {
+            
+            // Get the state data for verification
+            // Compute data for signing (hash of state + metadata)
+            let mut state_data = next_state.hash()?.to_vec();
+            if let Some(data) = next_state.get_parameter("signing_metadata") {
+                state_data.extend_from_slice(data);
+            }
+            
+            // Verify entity signature
+            if !crypto::verify_signature(
+                &state_data, 
+                entity_sig, 
+                &next_state.device_info.public_key
+            ) {
+                return Ok(false);
+            }
+            
+            // Verify counterparty signature if relationship exists
+            if let Some(relationship) = &next_state.relationship_context {
+                if !crypto::verify_signature(
+                    &state_data,
+                    counterparty_sig,
+                    &relationship.counterparty_public_key
+                ) {
+                    return Ok(false);
+                }
+                
+                Ok(true)
+            } else {
+                Ok(false) // No relationship context for bilateral mode
+            }
+        } else {
+            Ok(false) // Missing signatures
+        }
     }
 
-    /// Verify entity signature in unilateral mode
     fn verify_entity_signature(
-        current_state: &State,
+        _current_state: &State,
         next_state: &State,
     ) -> Result<bool, DsmError> {
-        // Verify sender's signature
-        // Implementation would verify cryptographic signature
-        Ok(true) // Placeholder
+        if let Some(signature) = &next_state.entity_sig {
+            // Compute data for signing (hash of state + metadata)
+            let mut state_data = next_state.hash()?.to_vec();
+            if let Some(data) = next_state.get_parameter("signing_metadata") {
+                state_data.extend_from_slice(data);
+            }
+            
+            Ok(crypto::verify_signature(
+                &state_data,
+                signature,
+                &next_state.device_info.public_key
+            ))
+        } else {
+            Ok(false)
+        }
     }
-
+     
     /// Verify recipient identity in decentralized storage
     fn verify_recipient_identity(state: &State) -> Result<bool, DsmError> {
-        // Implementation would check decentralized storage
-        // Dverify(IDB) from whitepaper equation (88)
-        Ok(true) // Placeholder
+        // In a real implementation, this would check with decentralized storage
+        // For now, we just check if the relationship context contains valid data
+        if let Some(relationship) = &state.relationship_context {
+            if relationship.counterparty_id.is_empty() || 
+               relationship.counterparty_public_key.is_empty() {
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        } else {
+            // For non-relationship operations, this is still valid
+            Ok(true)
+        }
     }
 
-    /// Verify token balance conservation across transition
     fn verify_token_conservation(
         current_state: &State,
         next_state: &State,
@@ -183,124 +250,95 @@ impl DualModeVerifier {
         }
         Ok(true)
     }
-
-    /// Verify token balance changes are valid for the operation
+  
     fn verify_balance_change_validity(
         current_state: &State,
         next_state: &State,
         token_id: &str,
-        current_balance: i64,
-        next_balance: i64,
+        current_balance: u64,
+        next_balance: u64,
     ) -> Result<bool, DsmError> {
         match &next_state.operation {
-            Operation::Transfer { amount, .. } => {
+            Operation::Transfer { amount, token_id: op_token_id, .. } => {
+                // Verify token ID matches
+                if token_id != op_token_id {
+                    return Ok(false);
+                }
+                
                 // Verify transfer amount matches balance change
-                if next_balance != current_balance - amount.value() {
+                let amount_value = amount.value();
+                if next_balance != current_balance - amount_value as u64 {
                     return Ok(false);
                 }
+                
+                // Verify transfer is valid
+                Self::verify_transfer_validity(current_state, next_state, token_id, amount)
             },
-            Operation::Mint { amount, .. } => {
-                // Verify mint amount matches balance increase
-                if next_balance != current_balance + amount.value() {
-                    return Ok(false);
-                }
-            },
-            Operation::Burn { amount, .. } => {
-                // Verify burn amount matches balance decrease
-                if next_balance != current_balance - amount.value() {
-                    return Ok(false);
-                }
-            },
-            _ => {
-                // Other operations shouldn't change balances
-                if next_balance != current_balance {
-                    return Ok(false);
-                }
-            }
+            _ => Ok(false),
         }
-        Ok(true)
     }
 
-    /// Verify entropy evolution follows whitepaper Section 7.1
     fn verify_entropy_evolution(
         current_state: &State,
         next_state: &State,
     ) -> Result<bool, DsmError> {
-        // Verify en+1 = H(en ∥ opn+1 ∥ (n + 1))
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&current_state.entropy);
-        hasher.update(&bincode::serialize(&next_state.operation)?);
-        hasher.update(&next_state.state_number.to_le_bytes());
+        // Verify entropy evolution using the deterministic entropy function
+        let new_entropy = DeterministicEntropy::derive_entropy(
+            &current_state.entropy,
+            &next_state.operation,
+            current_state.state_number + 1,
+        )?;
         
-        let expected_entropy = hasher.finalize().as_bytes().to_vec();
-        Ok(next_state.entropy == expected_entropy)
+        if new_entropy != next_state.entropy {
+            return Ok(false);
+        }
+        
+        Ok(true)
     }
 
-    /// Verify a transition adheres to pre-commitment parameters
+    #[allow(dead_code)]
     fn verify_precommitment_adherence(
         commitment: &PreCommitment,
         next_state: &State,
     ) -> Result<bool, DsmError> {
-        // Verify operation type matches commitment
-        let operation_type = match &next_state.operation {
-            Operation::Generic { operation_type, .. } => operation_type.as_bytes(),
-            Operation::Transfer { .. } => b"transfer",
-            Operation::Mint { .. } => b"mint", 
-            Operation::Burn { .. } => b"burn",
-            Operation::Create { .. } => b"create",
-            Operation::Update { .. } => b"update",
-            Operation::AddRelationship { .. } => b"add_relationship",
-            Operation::RemoveRelationship { .. } => b"remove_relationship",
-            Operation::Recovery { .. } => b"recovery",
-        };
+        // Verify pre-commitment conditions are met using available commitment fields
+        if next_state.state_number != commitment.min_state_number + 1 {
+            return Ok(false);
+        }
+        
+        if next_state.prev_state_hash != commitment.hash {
+            return Ok(false);
+        }
+        
+        // Removed entropy check because PreCommitment does not include an entropy field
+        Ok(true)
+    }
 
-        if operation_type != commitment.operation_type.as_bytes() {
+    /// Verify transfer validity
+    /// This function checks if a transfer operation is valid based on the current and next state.
+    /// It ensures that the transfer adheres to the rules defined for token transfers.
+    fn verify_transfer_validity(
+        current_state: &State,
+        _next_state: &State,
+        token_id: &str,
+        amount: &Balance,
+    ) -> Result<bool, DsmError> {
+        // Check if the token ID exists in the current state
+        if !current_state.token_balances.contains_key(token_id) {
             return Ok(false);
         }
 
-        // Verify all fixed parameters match exactly
-        for (key, value) in &commitment.fixed_parameters {
-            if let Some(param_value) = Self::extract_operation_parameter(&next_state.operation, key) {
-                if param_value != *value {
-                    return Ok(false);
-                }
-            } else {
-                return Ok(false);
-            }
+        // Check if the amount is valid (greater than zero)
+        if amount.value() == 0 {
+            return Ok(false);
         }
 
-        // Verify state number meets minimum
-        if next_state.state_number < commitment.min_state_number {
+        // Check if the transfer amount does not exceed the current balance
+        let current_balance = current_state.token_balances[token_id].value();
+        if amount.value() > current_balance {
             return Ok(false);
         }
 
         Ok(true)
-    }
-
-    /// Extract parameter value from operation for commitment verification
-    fn extract_operation_parameter(
-        operation: &Operation,
-        key: &str,
-    ) -> Option<Vec<u8>> {
-        match operation {
-            Operation::Transfer { amount, token_id, to_address, .. } => {
-                match key {
-                    "amount" => Some(amount.value().to_le_bytes().to_vec()),
-                    "token_id" => Some(token_id.as_bytes().to_vec()),
-                    "recipient" => Some(to_address.as_bytes().to_vec()),
-                    _ => None
-                }
-            },
-            // Add cases for other operation types
-            _ => None
-        }
-    }
-
-    /// Verify basic state transition without mode-specific logic
-    fn verify_basic_transition(
-        current_state: &State,
-        next_state: &State,
-    ) -> Result<bool, DsmError> {
-        Self::verify_transition_invariants(current_state, next_state)
     }
 }

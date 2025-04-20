@@ -1,3 +1,19 @@
+//! # DSM Communication Module
+//!
+//! This module provides networking and communication capabilities for the DSM system, including:
+//!
+//! * Peer-to-peer (P2P) networking with multiple transport layers
+//! * Secure communication channels with quantum-resistant encryption
+//! * Network protocol implementation and message handling
+//! * Directory services for node discovery
+//! * Near Field Communication (NFC) support
+//! * Storage node communication and caching
+//! * Certificate management for secure connections
+//!
+//! The communication module supports multiple transport types including TLS over TCP,
+//! secure UDP with DTLS, and Bluetooth (when the feature is enabled). It provides
+//! robust networking capabilities for distributed DSM nodes.
+
 pub mod crypto_net;
 pub mod directory;
 pub mod init;
@@ -14,18 +30,24 @@ use bytes::Bytes;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
+/// Default TLS port for DSM network communication
 pub const DEFAULT_PORT: u16 = 4433;
+/// Default UDP port for DSM network communication
 pub const DEFAULT_UDP_PORT: u16 = 4434;
+/// Default maximum message size (16MB)
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB limit
 
-/// Transport type enumeration
+/// Transport type enumeration for network communications
+///
+/// Defines the available transport protocols that can be used
+/// for communication between DSM nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportType {
-    /// TLS over TCP
+    /// TLS over TCP for reliable, secure communication
     Tls,
-    /// Secure UDP with DTLS
+    /// Secure UDP with DTLS for faster, connectionless communication
     SecureUdp,
-    /// Bluetooth transport
+    /// Bluetooth transport for direct device-to-device communication
     #[cfg(feature = "bluetooth")]
     Bluetooth,
 }

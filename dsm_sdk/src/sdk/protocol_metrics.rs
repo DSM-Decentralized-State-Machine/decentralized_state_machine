@@ -1,9 +1,53 @@
-// DSM SDK Protocol Metrics Module
-//
-// This module provides comprehensive metrics and verification capabilities
-// for the DSM protocol, focusing on security, performance, and state integrity.
-// It integrates with the core DSM architecture to provide real-time verification
-// and metrics for protocol operations.
+//! # Protocol Metrics SDK Module
+//!
+//! This module provides comprehensive metrics and verification capabilities
+//! for the DSM protocol, focusing on security, performance, and state integrity.
+//! It implements the verification mechanisms described in section 5 of the DSM whitepaper
+//! and integrates with the core DSM architecture to provide real-time verification
+//! and metrics for protocol operations.
+//!
+//! ## Key Concepts
+//!
+//! * **Protocol Verification**: Cryptographic verification of state transitions and signatures
+//! * **Performance Metrics**: Execution time and resource utilization tracking
+//! * **State Integrity**: Validation of hash chain continuity and state transition correctness
+//! * **Security Metrics**: Tracking of cryptographic operations and verification results
+//! * **Runtime Reporting**: Real-time metrics and formatted verification reports
+//!
+//! ## Architecture
+//!
+//! The Protocol Metrics module follows the layered verification architecture:
+//!
+//! 1. **State Transition Verification**: Ensures each state change is valid according to protocol rules
+//! 2. **Signature Verification**: Validates cryptographic signatures for all operations
+//! 3. **Hash Chain Verification**: Ensures continuity and integrity of the state machine hash chain
+//! 4. **Timing and Performance**: Measures execution time and resource utilization
+//!
+//! ## Usage Example
+//!
+//! ```rust
+//! use dsm_sdk::protocol_metrics::{create_metrics_manager, ProtocolMetricsManager};
+//! use dsm::core::state_machine::StateMachine;
+//! use std::sync::Arc;
+//!
+//! // Create a state machine
+//! let state_machine = Arc::new(StateMachine::new());
+//!
+//! // Create a metrics manager
+//! let metrics = create_metrics_manager(state_machine.clone());
+//!
+//! // Start timing protocol execution
+//! metrics.start_timer("protocol_execution");
+//!
+//! // Perform protocol operations...
+//!
+//! // Stop timing and get the results
+//! metrics.stop_timer("protocol_execution");
+//!
+//! // Get verification report
+//! let verification_report = metrics.finalize_verification();
+//! println!("{}", verification_report);
+//! ```
 
 use std::{
     collections::HashMap,
@@ -20,16 +64,40 @@ use dsm::{
 };
 
 /// Timekeeper for protocol operation metrics
+///
+/// Provides precise timing capabilities for measuring the performance
+/// of protocol operations, with nanosecond precision.
 #[derive(Debug, Clone)]
 pub struct ProtocolTimer {
+    /// Time when the timer was started
     start_time: Option<Instant>,
+    
+    /// Recorded elapsed time after stopping
     elapsed: Option<Duration>,
+    
+    /// Name of the operation being timed
     #[allow(dead_code)]
     operation_name: String,
 }
 
 impl ProtocolTimer {
-    /// Create a new protocol timer
+    /// Create a new protocol timer for a specific operation
+    ///
+    /// # Arguments
+    ///
+    /// * `operation_name` - Name of the operation to time
+    ///
+    /// # Returns
+    ///
+    /// A new timer instance ready to be started
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolTimer;
+    ///
+    /// let mut timer = ProtocolTimer::new("state_verification");
+    /// ```
     pub fn new(operation_name: &str) -> Self {
         Self {
             start_time: None,
@@ -38,12 +106,41 @@ impl ProtocolTimer {
         }
     }
 
-    /// Start the timer
+    /// Start the timer, recording the current time
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolTimer;
+    ///
+    /// let mut timer = ProtocolTimer::new("hash_calculation");
+    /// timer.start();
+    /// // Perform operation to time
+    /// ```
     pub fn start(&mut self) {
         self.start_time = Some(Instant::now());
     }
 
     /// Stop the timer and record elapsed time
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Duration)` - The elapsed time if the timer was started
+    /// * `None` - If the timer was not started
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolTimer;
+    /// use std::time::Duration;
+    ///
+    /// let mut timer = ProtocolTimer::new("crypto_operation");
+    /// timer.start();
+    /// // Perform operation to time
+    /// let elapsed = timer.stop();
+    /// assert!(elapsed.is_some());
+    /// println!("Operation took {} ms", elapsed.unwrap().as_millis());
+    /// ```
     pub fn stop(&mut self) -> Option<Duration> {
         if let Some(start) = self.start_time {
             self.elapsed = Some(start.elapsed());
@@ -53,12 +150,30 @@ impl ProtocolTimer {
         }
     }
 
-    /// Get the elapsed time
+    /// Get the elapsed time without stopping the timer
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Duration)` - The elapsed time if the timer was stopped
+    /// * `None` - If the timer was not stopped yet
     pub fn elapsed(&self) -> Option<Duration> {
         self.elapsed
     }
 
-    /// Reset the timer
+    /// Reset the timer to its initial state
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolTimer;
+    ///
+    /// let mut timer = ProtocolTimer::new("verification");
+    /// timer.start();
+    /// // After completing one operation
+    /// timer.stop();
+    /// // Reset for next operation
+    /// timer.reset();
+    /// ```
     pub fn reset(&mut self) {
         self.start_time = None;
         self.elapsed = None;
@@ -66,22 +181,41 @@ impl ProtocolTimer {
 }
 
 /// Protocol execution verification result
+///
+/// Contains comprehensive verification results for a protocol execution,
+/// including component-level verification status and detailed metrics.
 #[derive(Debug, Clone)]
 pub struct ProtocolVerification {
-    /// Overall verification status
+    /// Overall verification status (true only if all components verified)
     pub verified: bool,
+    
     /// Detailed verification results by component
     pub component_results: HashMap<String, bool>,
-    /// Verification timestamp
+    
+    /// Verification timestamp in Unix epoch seconds
     pub timestamp: i64,
+    
     /// Detailed error messages by component
     pub errors: HashMap<String, String>,
+    
     /// Verification metrics
     pub metrics: ProtocolMetrics,
 }
 
 impl ProtocolVerification {
     /// Create a new protocol verification result
+    ///
+    /// # Returns
+    ///
+    /// A new verification result with default values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolVerification;
+    ///
+    /// let verification = ProtocolVerification::new();
+    /// ```
     pub fn new() -> Self {
         Self {
             verified: false,
@@ -93,6 +227,24 @@ impl ProtocolVerification {
     }
 
     /// Add a component verification result
+    ///
+    /// Records the verification result for a specific component
+    /// and updates the overall verification status.
+    ///
+    /// # Arguments
+    ///
+    /// * `component` - Name of the component being verified
+    /// * `verified` - True if the component verification passed, false otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolVerification;
+    ///
+    /// let mut verification = ProtocolVerification::new();
+    /// verification.add_component_result("signature", true);
+    /// verification.add_component_result("hash_chain", true);
+    /// ```
     pub fn add_component_result(&mut self, component: &str, verified: bool) {
         self.component_results
             .insert(component.to_string(), verified);
@@ -101,11 +253,31 @@ impl ProtocolVerification {
     }
 
     /// Add an error message for a component
+    ///
+    /// Records a detailed error message for a component that failed verification.
+    ///
+    /// # Arguments
+    ///
+    /// * `component` - Name of the component with the error
+    /// * `error` - Detailed error message
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolVerification;
+    ///
+    /// let mut verification = ProtocolVerification::new();
+    /// verification.add_component_result("hash_chain", false);
+    /// verification.add_error("hash_chain", "Hash chain broken between states 5 and 6");
+    /// ```
     pub fn add_error(&mut self, component: &str, error: &str) {
         self.errors.insert(component.to_string(), error.to_string());
     }
 
     /// Update the overall verification status based on component results
+    ///
+    /// Sets the overall verification status to true only if all
+    /// component verifications were successful.
     fn update_verification_status(&mut self) {
         // Overall verification status is true only if all components verified successfully
         self.verified =
@@ -113,6 +285,23 @@ impl ProtocolVerification {
     }
 
     /// Get a formatted representation of the verification result
+    ///
+    /// Returns a human-readable, formatted report of the verification
+    /// results, with color-coding for the terminal.
+    ///
+    /// # Returns
+    ///
+    /// A formatted string with verification results and metrics
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolVerification;
+    ///
+    /// let verification = ProtocolVerification::new();
+    /// let report = verification.formatted_output();
+    /// println!("{}", report);
+    /// ```
     pub fn formatted_output(&self) -> String {
         let _status_str = if self.verified {
             "\x1b[1;32mVERIFIED\x1b[0m"
@@ -187,30 +376,53 @@ impl Default for ProtocolVerification {
 }
 
 /// Protocol metrics for measuring performance and security
+///
+/// Tracks comprehensive metrics related to protocol execution,
+/// including performance, cryptographic operations, and verification status.
 #[derive(Debug, Clone)]
 pub struct ProtocolMetrics {
     /// Execution time of the protocol operation
     pub execution_time: Option<Duration>,
-    /// Cryptographic operations performed
+    
+    /// Number of cryptographic operations performed
     pub crypto_operations: u32,
-    /// State transitions executed
+    
+    /// Number of state transitions executed
     pub state_transitions: u32,
-    /// Memory safety verification status
+    
+    /// Memory safety verification status (always true in Rust)
     pub memory_safety_verified: bool,
+    
     /// Comprehensive verification status
     pub verification_status: bool,
+    
     /// Trade status (SUCCESS, PENDING, FAILED)
     pub trade_status: String,
-    /// State hash integrity verification
+    
+    /// State hash integrity verification status
     pub state_hash_verified: bool,
-    /// Signature verifications performed
+    
+    /// Number of signature verifications performed
     pub signature_verifications: u32,
-    /// Hash chain continuity verification
+    
+    /// Hash chain continuity verification status
     pub hash_chain_verified: bool,
 }
 
 impl ProtocolMetrics {
-    /// Create new protocol metrics
+    /// Create new protocol metrics with default values
+    ///
+    /// # Returns
+    ///
+    /// A new ProtocolMetrics instance with default values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetrics;
+    ///
+    /// let metrics = ProtocolMetrics::new();
+    /// ```
     pub fn new() -> Self {
         Self {
             execution_time: None,
@@ -225,47 +437,122 @@ impl ProtocolMetrics {
         }
     }
 
-    /// Set the execution time
+    /// Set the execution time for the protocol operation
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - The measured execution time
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetrics;
+    /// use std::time::Duration;
+    ///
+    /// let mut metrics = ProtocolMetrics::new();
+    /// metrics.set_execution_time(Duration::from_millis(250));
+    /// ```
     pub fn set_execution_time(&mut self, time: Duration) {
         self.execution_time = Some(time);
     }
 
     /// Increment cryptographic operations counter
+    ///
+    /// Tracks the total number of cryptographic operations performed
+    /// during protocol execution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetrics;
+    ///
+    /// let mut metrics = ProtocolMetrics::new();
+    /// metrics.increment_crypto_operations();
+    /// assert_eq!(metrics.crypto_operations, 1);
+    /// ```
     pub fn increment_crypto_operations(&mut self) {
         self.crypto_operations += 1;
     }
 
     /// Increment state transitions counter
+    ///
+    /// Tracks the total number of state transitions executed
+    /// during protocol execution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetrics;
+    ///
+    /// let mut metrics = ProtocolMetrics::new();
+    /// metrics.increment_state_transitions();
+    /// assert_eq!(metrics.state_transitions, 1);
+    /// ```
     pub fn increment_state_transitions(&mut self) {
         self.state_transitions += 1;
     }
 
-    /// Set the verification status
+    /// Set the overall verification status
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - True if verification passed, false otherwise
     pub fn set_verification_status(&mut self, status: bool) {
         self.verification_status = status;
     }
 
     /// Set the trade status
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The trade status (SUCCESS, PENDING, FAILED)
     pub fn set_trade_status(&mut self, status: &str) {
         self.trade_status = status.to_string();
     }
 
     /// Set the state hash verification status
+    ///
+    /// # Arguments
+    ///
+    /// * `verified` - True if state hash verification passed, false otherwise
     pub fn set_state_hash_verified(&mut self, verified: bool) {
         self.state_hash_verified = verified;
     }
 
     /// Increment signature verifications counter
+    ///
+    /// Tracks the total number of signature verifications performed
+    /// during protocol execution.
     pub fn increment_signature_verifications(&mut self) {
         self.signature_verifications += 1;
     }
 
     /// Set the hash chain verification status
+    ///
+    /// # Arguments
+    ///
+    /// * `verified` - True if hash chain verification passed, false otherwise
     pub fn set_hash_chain_verified(&mut self, verified: bool) {
         self.hash_chain_verified = verified;
     }
 
     /// Update the overall verification status based on component verifications
+    ///
+    /// Updates the overall verification status and trade status based on
+    /// the verification status of individual components.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetrics;
+    ///
+    /// let mut metrics = ProtocolMetrics::new();
+    /// metrics.set_state_hash_verified(true);
+    /// metrics.set_hash_chain_verified(true);
+    /// metrics.update_verification_status();
+    /// assert!(metrics.verification_status);
+    /// assert_eq!(metrics.trade_status, "SUCCESS");
+    /// ```
     pub fn update_verification_status(&mut self) {
         self.verification_status = self.state_hash_verified && self.hash_chain_verified;
 
@@ -285,19 +572,44 @@ impl Default for ProtocolMetrics {
 }
 
 /// Protocol metrics manager for tracking and reporting protocol metrics
+///
+/// Provides a comprehensive suite of tools for tracking metrics,
+/// verifying protocol execution, and generating reports.
 pub struct ProtocolMetricsManager {
     /// Active timers for measuring operation durations
     timers: Mutex<HashMap<String, ProtocolTimer>>,
+    
     /// Metrics for the current protocol execution
     current_metrics: Mutex<ProtocolMetrics>,
+    
     /// Protocol verification result
     verification: Mutex<ProtocolVerification>,
+    
     /// State machine reference for state verification
     state_machine: Arc<StateMachine>,
 }
 
 impl ProtocolMetricsManager {
     /// Create a new protocol metrics manager
+    ///
+    /// # Arguments
+    ///
+    /// * `state_machine` - Arc-wrapped StateMachine for state verification
+    ///
+    /// # Returns
+    ///
+    /// A new ProtocolMetricsManager instance
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::ProtocolMetricsManager;
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// let state_machine = Arc::new(StateMachine::new());
+    /// let metrics_manager = ProtocolMetricsManager::new(state_machine);
+    /// ```
     pub fn new(state_machine: Arc<StateMachine>) -> Self {
         Self {
             timers: Mutex::new(HashMap::new()),
@@ -308,6 +620,24 @@ impl ProtocolMetricsManager {
     }
 
     /// Start a timer for an operation
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - Name of the operation to time
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// let state_machine = Arc::new(StateMachine::new());
+    /// let metrics = create_metrics_manager(state_machine);
+    ///
+    /// // Start timing the protocol execution
+    /// metrics.start_timer("protocol_execution");
+    /// ```
     pub fn start_timer(&self, operation: &str) {
         let mut timers = self.timers.lock().unwrap();
         let mut timer = ProtocolTimer::new(operation);
@@ -316,6 +646,37 @@ impl ProtocolMetricsManager {
     }
 
     /// Stop a timer and record the elapsed time
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - Name of the operation to stop timing
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Duration)` - The elapsed time if the timer was started
+    /// * `None` - If the timer was not found or not started
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// let state_machine = Arc::new(StateMachine::new());
+    /// let metrics = create_metrics_manager(state_machine);
+    ///
+    /// // Start timing
+    /// metrics.start_timer("protocol_execution");
+    ///
+    /// // Perform some operations...
+    ///
+    /// // Stop timing and get elapsed time
+    /// let elapsed = metrics.stop_timer("protocol_execution");
+    /// if let Some(duration) = elapsed {
+    ///     println!("Execution took: {} ms", duration.as_millis());
+    /// }
+    /// ```
     pub fn stop_timer(&self, operation: &str) -> Option<Duration> {
         let mut timers = self.timers.lock().unwrap();
         if let Some(timer) = timers.get_mut(operation) {
@@ -336,6 +697,46 @@ impl ProtocolMetricsManager {
     }
 
     /// Verify a state transition
+    ///
+    /// Verifies that a state transition is valid according to protocol rules.
+    ///
+    /// # Arguments
+    ///
+    /// * `prev_state` - The previous state
+    /// * `next_state` - The next state
+    /// * `operation` - The operation that caused the transition
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if the transition is valid, false otherwise
+    /// * `Err(DsmError)` - If verification failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use dsm::types::state_types::State;
+    /// use dsm::types::operations::Operation;
+    /// use std::sync::Arc;
+    ///
+    /// async fn verify_example(
+    ///     metrics: Arc<ProtocolMetricsManager>,
+    ///     prev_state: State,
+    ///     next_state: State,
+    ///     operation: Operation
+    /// ) {
+    ///     let verified = metrics.verify_state_transition(
+    ///         &prev_state,
+    ///         &next_state,
+    ///         &operation
+    ///     ).unwrap();
+    ///
+    ///     if verified {
+    ///         println!("State transition verified successfully");
+    ///     }
+    /// }
+    /// ```
     pub fn verify_state_transition(
         &self,
         prev_state: &State,
@@ -399,7 +800,45 @@ impl ProtocolMetricsManager {
         Ok(verified)
     }
 
-    /// Verify a signature
+    /// Verify a cryptographic signature
+    ///
+    /// Verifies that a cryptographic signature is valid for the given data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data that was signed
+    /// * `signature` - The signature to verify
+    /// * `public_key` - The public key to verify against
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if the signature is valid, false otherwise
+    /// * `Err(DsmError)` - If verification failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// async fn verify_signature_example(
+    ///     metrics: Arc<ProtocolMetricsManager>,
+    ///     data: Vec<u8>,
+    ///     signature: Vec<u8>,
+    ///     public_key: Vec<u8>
+    /// ) {
+    ///     let verified = metrics.verify_signature(
+    ///         &data,
+    ///         &signature,
+    ///         &public_key
+    ///     ).unwrap();
+    ///
+    ///     if verified {
+    ///         println!("Signature verified successfully");
+    ///     }
+    /// }
+    /// ```
     pub fn verify_signature(
         &self,
         data: &[u8],
@@ -452,7 +891,41 @@ impl ProtocolMetricsManager {
         Ok(verified)
     }
 
-    /// Verify a hash chain
+    /// Verify a hash chain's continuity and integrity
+    ///
+    /// Verifies that a sequence of states forms a valid hash chain,
+    /// with proper state number sequencing and hash linking.
+    ///
+    /// # Arguments
+    ///
+    /// * `states` - The sequence of states to verify
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if the hash chain is valid, false otherwise
+    /// * `Err(DsmError)` - If verification failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use dsm::types::state_types::State;
+    /// use std::sync::Arc;
+    ///
+    /// async fn verify_hash_chain_example(
+    ///     metrics: Arc<ProtocolMetricsManager>,
+    ///     states: Vec<State>
+    /// ) {
+    ///     let verified = metrics.verify_hash_chain(&states).unwrap();
+    ///
+    ///     if verified {
+    ///         println!("Hash chain verified successfully");
+    ///     } else {
+    ///         println!("Hash chain verification failed");
+    ///     }
+    /// }
+    /// ```
     pub fn verify_hash_chain(&self, states: &[State]) -> Result<bool, DsmError> {
         // Start timer for verification
         self.start_timer("hash_chain_verification");
@@ -510,6 +983,32 @@ impl ProtocolMetricsManager {
     }
 
     /// Calculate a deterministic hash for data using BLAKE3
+    ///
+    /// Calculates a cryptographic hash of the input data using the
+    /// BLAKE3 hash function, which provides high performance and
+    /// cryptographic security.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to hash
+    ///
+    /// # Returns
+    ///
+    /// A vector of bytes containing the hash
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// fn calculate_hash_example(metrics: Arc<ProtocolMetricsManager>) {
+    ///     let data = b"Data to hash";
+    ///     let hash = metrics.calculate_hash(data);
+    ///     println!("Hash: {:?}", hash);
+    /// }
+    /// ```
     pub fn calculate_hash(&self, data: &[u8]) -> Vec<u8> {
         // Start timer for hashing
         self.start_timer("hash_calculation");
@@ -532,6 +1031,27 @@ impl ProtocolMetricsManager {
     }
 
     /// Update verification status and return formatted results
+    ///
+    /// Updates the overall verification status based on component
+    /// verifications and returns a formatted report.
+    ///
+    /// # Returns
+    ///
+    /// A formatted string with verification results and metrics
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// fn finalize_example(metrics: Arc<ProtocolMetricsManager>) {
+    ///     // After performing all verifications
+    ///     let report = metrics.finalize_verification();
+    ///     println!("{}", report);
+    /// }
+    /// ```
     pub fn finalize_verification(&self) -> String {
         // Update verification status based on component results
         {
@@ -554,6 +1074,22 @@ impl ProtocolMetricsManager {
     }
 
     /// Reset metrics for a new execution
+    ///
+    /// Resets all metrics, timers, and verification results to prepare
+    /// for a new protocol execution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// fn reset_example(metrics: Arc<ProtocolMetricsManager>) {
+    ///     // Reset metrics before starting a new protocol execution
+    ///     metrics.reset();
+    /// }
+    /// ```
     pub fn reset(&self) {
         {
             let mut timers = self.timers.lock().unwrap();
@@ -572,12 +1108,51 @@ impl ProtocolMetricsManager {
     }
 
     /// Get current metrics
+    ///
+    /// # Returns
+    ///
+    /// A clone of the current metrics
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// fn get_metrics_example(metrics: Arc<ProtocolMetricsManager>) {
+    ///     let current_metrics = metrics.get_metrics();
+    ///     println!("Crypto operations: {}", current_metrics.crypto_operations);
+    ///     println!("State transitions: {}", current_metrics.state_transitions);
+    /// }
+    /// ```
     pub fn get_metrics(&self) -> ProtocolMetrics {
         let metrics = self.current_metrics.lock().unwrap();
         metrics.clone()
     }
 
     /// Get verification results
+    ///
+    /// # Returns
+    ///
+    /// A clone of the current verification results
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::protocol_metrics::{ProtocolMetricsManager, create_metrics_manager};
+    /// use dsm::core::state_machine::StateMachine;
+    /// use std::sync::Arc;
+    ///
+    /// fn get_verification_example(metrics: Arc<ProtocolMetricsManager>) {
+    ///     let verification = metrics.get_verification();
+    ///     if verification.verified {
+    ///         println!("Protocol execution verified successfully");
+    ///     } else {
+    ///         println!("Protocol execution verification failed");
+    ///     }
+    /// }
+    /// ```
     pub fn get_verification(&self) -> ProtocolVerification {
         let verification = self.verification.lock().unwrap();
         verification.clone()
@@ -585,11 +1160,55 @@ impl ProtocolMetricsManager {
 }
 
 /// Create a metrics manager with the specified state machine
+///
+/// # Arguments
+///
+/// * `state_machine` - Arc-wrapped StateMachine for state verification
+///
+/// # Returns
+///
+/// An Arc-wrapped ProtocolMetricsManager
+///
+/// # Examples
+///
+/// ```
+/// use dsm_sdk::protocol_metrics::create_metrics_manager;
+/// use dsm::core::state_machine::StateMachine;
+/// use std::sync::Arc;
+///
+/// let state_machine = Arc::new(StateMachine::new());
+/// let metrics = create_metrics_manager(state_machine);
+/// ```
 pub fn create_metrics_manager(state_machine: Arc<StateMachine>) -> Arc<ProtocolMetricsManager> {
     Arc::new(ProtocolMetricsManager::new(state_machine))
 }
 
 /// Calculate integrity hash for a set of data
+///
+/// Calculates a deterministic hash over multiple data items,
+/// useful for verifying the integrity of a set of related data.
+///
+/// # Arguments
+///
+/// * `data_items` - Slice of data items to hash
+///
+/// # Returns
+///
+/// A vector of bytes containing the hash
+///
+/// # Examples
+///
+/// ```
+/// use dsm_sdk::protocol_metrics::calculate_integrity_hash;
+///
+/// fn integrity_hash_example() {
+///     let data1 = b"First piece of data";
+///     let data2 = b"Second piece of data";
+///     
+///     let hash = calculate_integrity_hash(&[data1, data2]);
+///     println!("Integrity hash: {:?}", hash);
+/// }
+/// ```
 pub fn calculate_integrity_hash(data_items: &[&[u8]]) -> Vec<u8> {
     let mut hasher = Hasher::new();
 
@@ -602,6 +1221,25 @@ pub fn calculate_integrity_hash(data_items: &[&[u8]]) -> Vec<u8> {
 }
 
 /// Verify memory safety at runtime (always true in Rust due to borrow checker)
+///
+/// This function always returns true in Rust due to the borrow checker
+/// ensuring memory safety at compile time. It's included for completeness
+/// in the metrics API.
+///
+/// # Returns
+///
+/// Always true in Rust
+///
+/// # Examples
+///
+/// ```
+/// use dsm_sdk::protocol_metrics::verify_memory_safety;
+///
+/// fn memory_safety_example() {
+///     let safe = verify_memory_safety();
+///     assert!(safe);
+/// }
+/// ```
 pub fn verify_memory_safety() -> bool {
     // This is always true in a compiled Rust program due to the borrow checker
     // It's included here for completeness in the metrics API

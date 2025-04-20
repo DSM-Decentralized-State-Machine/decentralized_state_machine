@@ -1,9 +1,9 @@
 //! Sparse Index Implementation
 //!
-//! This module implements the sparse index functionality described in whitepaper Section 3.2.
+//! This module implements the sparse index functionality described in whitepaper Section 10.2.
 //! It provides efficient state lookups through checkpoint storage and management.
 
-use crate::merkle::sparse_merkle_tree::{create_tree, SparseMerkleTreeImpl};
+use crate::merkle::sparse_merkle_tree::{self, SparseMerkleTreeImpl};
 use crate::types::error::DsmError;
 use crate::types::state_types::State;
 use std::collections::HashMap;
@@ -11,10 +11,10 @@ use std::sync::{Arc, RwLock};
 
 /// The `SparseIndexManager` maintains checkpoints at regular intervals for efficient state lookups.
 ///
-/// As described in the whitepaper Section 3.2, the sparse index maintains checkpoints at regular intervals:
+/// As described in the whitepaper Section 10.2, the sparse index maintains checkpoints at regular intervals:
 /// SI = {S₀, Sₖ, S₂ₖ, ..., Sₙₖ} where k is the checkpoint interval.
 ///
-/// This enables O(1) lookup for checkpoint states and efficient traversal for non-checkpoint states.
+/// This enables O(log n) lookup for checkpoint states and efficient traversal for non-checkpoint states.
 #[derive(Clone)]
 pub struct SparseIndexManager {
     /// Map of state number to checkpointed state
@@ -51,7 +51,7 @@ impl SparseIndexManager {
         max_checkpoint_age: Option<u64>,
     ) -> Self {
         let merkle_tree = if with_merkle_tree {
-            Some(Arc::new(RwLock::new(create_tree(
+            Some(Arc::new(RwLock::new(sparse_merkle_tree::create_tree(
                 merkle_tree_height.unwrap_or(20),
             ))))
         } else {
@@ -147,7 +147,7 @@ impl SparseIndexManager {
 
     /// Get a state by its number using sparse index for efficient lookup
     ///
-    /// As described in the whitepaper Section 3.2:
+    /// As described in the whitepaper Section 10.2:
     /// 1. Find the nearest checkpoint before the target state
     /// 2. Traverse forward from that checkpoint
     ///
@@ -253,5 +253,55 @@ impl SparseIndexManager {
             .filter(|&&k| k <= state_number)
             .max()
             .copied())
+    }
+    
+    /// Generate a Merkle inclusion proof for a state
+    ///
+    /// # Arguments
+    /// * `state_number` - The state number to generate a proof for
+    ///
+    /// # Returns
+    /// * `Result<Option<crate::types::state_types::MerkleProof>, DsmError>` - The Merkle proof, if available
+    pub fn generate_merkle_proof(
+        &self,
+        state_number: u64
+    ) -> Result<Option<crate::types::state_types::MerkleProof>, DsmError> {
+        if let Some(ref tree) = self.merkle_tree {
+            let tree = tree.read().map_err(|_| DsmError::LockError)?;
+            
+            let proof = tree.get_proof(state_number)?;
+            Ok(Some(proof))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Verify a Merkle proof for a state
+    ///
+    /// # Arguments
+    /// * `state` - The state to verify
+    /// * `proof` - The Merkle proof
+    ///
+    /// # Returns
+    /// * `Result<bool, DsmError>` - Whether the proof is valid
+    pub fn verify_merkle_proof(
+        &self,
+        state: &State,
+        proof: &crate::types::state_types::MerkleProof
+    ) -> Result<bool, DsmError> {
+        if let Some(ref tree) = self.merkle_tree {
+            let tree = tree.read().map_err(|_| DsmError::LockError)?;
+            
+            let state_hash = state.hash()?;
+            let root_hash = tree.root();
+            
+            sparse_merkle_tree::verify_proof(
+                root_hash,
+                &state_hash,
+                proof
+            )
+        } else {
+            Ok(false)
+        }
     }
 }

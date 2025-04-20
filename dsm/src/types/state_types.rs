@@ -59,6 +59,10 @@ pub struct StateParams {
     pub(crate) forward_link: Option<Vec<u8>>,
     #[allow(dead_code)]
     pub(crate) large_state: Box<State>,
+    #[allow(dead_code)]
+    pub entity_sig: Option<Vec<u8>>,
+    #[allow(dead_code)]
+    pub counterparty_sig: Option<Vec<u8>>,
 }
 
 impl StateParams {
@@ -90,6 +94,8 @@ impl StateParams {
             version: 0,
             forward_link: None,
             large_state: Box::new(State::default()),
+            entity_sig: None,
+            counterparty_sig: None,
         }
     }
 
@@ -291,6 +297,8 @@ pub struct State {
     pub(crate) device_id: String,
     hashchain_head: Option<Vec<u8>>,
     external_data: HashMap<String, Vec<u8>>,
+    pub(crate) entity_sig: Option<Vec<u8>>,
+    pub(crate) counterparty_sig: Option<Vec<u8>>,
     pub(crate) value: Vec<i32>,
     pub(crate) commitment: Vec<i32>,
     pub(crate) state_type: String,
@@ -338,6 +346,8 @@ impl State {
             external_data: HashMap::new(),
             value: params.value,
             commitment: params.commitment,
+            entity_sig: None,
+            counterparty_sig: None,
             state_type: params.state_type,
         }
     }
@@ -385,6 +395,8 @@ impl State {
             external_data: HashMap::new(),
             value: Vec::new(),
             commitment: Vec::new(),
+            entity_sig: None,
+            counterparty_sig: None,
             state_type: String::from("standard"),
         }
     }
@@ -496,6 +508,26 @@ impl State {
         }
 
         Ok(hasher.finalize().as_bytes().to_vec())
+    }
+    
+    /// Set the entity signature
+    pub fn set_entity_signature(&mut self, signature: Option<Vec<u8>>) {
+        self.entity_sig = signature;
+    }
+    
+    /// Set the counterparty signature
+    pub fn set_counterparty_signature(&mut self, signature: Option<Vec<u8>>) {
+        self.counterparty_sig = signature;
+    }
+    
+    /// Get the entity signature
+    pub fn entity_signature(&self) -> Option<&Vec<u8>> {
+        self.entity_sig.as_ref()
+    }
+    
+    /// Get the counterparty signature
+    pub fn counterparty_signature(&self) -> Option<&Vec<u8>> {
+        self.counterparty_sig.as_ref()
     }
 
     /// Compute the pre-finalization hash that excludes token balances
@@ -667,6 +699,8 @@ impl State {
             device_id: prev_state.device_info.device_id.clone(),
             hashchain_head: Some(new_hash_cloned),
             external_data: HashMap::new(),
+            entity_sig: None,
+            counterparty_sig: None,
             value: Vec::new(),
             commitment: Vec::new(),
             state_type: String::from("benchmark"),

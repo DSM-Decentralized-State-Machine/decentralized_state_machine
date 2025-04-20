@@ -1,9 +1,54 @@
-//! Smart Commitment SDK Module
+//! # Smart Commitment SDK Module
 //!
 //! This module implements the non-Turing-complete deterministic smart commitments
-//! as described in section 10 of the mathematical blueprint. It provides secure,
+//! as described in section 10 of the DSM whitepaper. It provides secure,
 //! deterministic conditionals for time-locked, oracle-based, and recurring transfers
 //! with quantum-resistant cryptographic guarantees.
+//!
+//! ## Key Concepts
+//!
+//! * **Deterministic Conditionals**: Mathematical commitment structures that enable conditional logic
+//! * **Time-Locked Transfers**: Funds that become available at a specific future time
+//! * **Oracle-Based Conditionals**: Transfers triggered by external verifiable data sources
+//! * **Recurring Payments**: Automated periodic transfers with configurable schedules
+//! * **Post-Quantum Security**: Uses quantum-resistant CRYSTALS-Kyber cryptography
+//!
+//! ## Architecture
+//!
+//! DSM's smart commitment system follows the mathematical model:
+//!
+//! * **Time-locked**: Cᵗⁱᵐᵉ = H(Sₙ ‖ recipient ‖ amount ‖ "after" ‖ T)
+//! * **Conditional**: Cᶜᵒⁿᵈ = H(Sₙ ‖ recipient ‖ amount ‖ "if" ‖ condition ‖ O)
+//! * **Recurring**: Cʳᵉᶜᵘʳ = H(Sₙ ‖ recipient ‖ amount ‖ "every" ‖ period ‖ end-date)
+//!
+//! Where H is the secure hash function, Sₙ is the current state, and all operations
+//! enforce cryptographic verification to ensure integrity and non-repudiation.
+//!
+//! ## Usage Example
+//!
+//! ```rust
+//! use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+//! use dsm_sdk::core_sdk::CoreSDK;
+//! use chrono::{Duration, Utc};
+//! use std::sync::Arc;
+//!
+//! // Create a time-locked payment that unlocks in one week
+//! fn create_future_payment() {
+//!     let core_sdk = Arc::new(CoreSDK::new());
+//!     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+//!     
+//!     // Create a commitment that unlocks in 7 days
+//!     let unlock_time = Utc::now() + Duration::days(7);
+//!     let commitment = commitment_sdk.create_time_locked_commitment(
+//!         "recipient_address", 
+//!         100, // amount
+//!         unlock_time
+//!     ).unwrap();
+//!     
+//!     println!("Created time-locked commitment with hash: {:?}", 
+//!              hex::encode(&commitment.commitment_hash));
+//! }
+//! ```
 
 use blake3;
 use chrono::{DateTime, Utc};
@@ -24,26 +69,47 @@ use pqcrypto_traits::kem::{
 };
 use std::string::String as Address; // Use String as Address type alias
 
-/// Smart commitment conditions as specified in section 10
+/// Smart commitment conditions as specified in section 10 of the DSM whitepaper
+///
+/// These conditions define when and how a commitment can be executed,
+/// providing deterministic conditionals for various use cases.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CommitmentCondition {
-    /// Time-locked commitment: Ctime = H(Sn ∥ recipient ∥ amount ∥ "after" ∥ T)
-    TimeLocked { unlock_time: DateTime<Utc> },
+    /// Time-locked commitment that becomes executable after a specific time
+    ///
+    /// Mathematical formula: Ctime = H(Sn ∥ recipient ∥ amount ∥ "after" ∥ T)
+    TimeLocked { 
+        /// Timestamp when the commitment becomes executable
+        unlock_time: DateTime<Utc> 
+    },
 
-    /// Conditional (oracle-based) commitment: Ccond = H(Sn ∥ recipient ∥ amount ∥ "if" ∥ condition ∥ O)
+    /// Conditional (oracle-based) commitment that executes when an external condition is met
+    ///
+    /// Mathematical formula: Ccond = H(Sn ∥ recipient ∥ amount ∥ "if" ∥ condition ∥ O)
     ConditionalOracle {
+        /// The condition expression to be verified (e.g., "temperature > 30°C")
         condition: String,
+        
+        /// Identifier of the oracle that will verify the condition
         oracle_id: String,
     },
 
-    /// Recurring payment commitment: Crecur = H(Sn ∥ recipient ∥ amount ∥ "every" ∥ period ∥ end-date)
+    /// Recurring payment commitment that executes periodically
+    ///
+    /// Mathematical formula: Crecur = H(Sn ∥ recipient ∥ amount ∥ "every" ∥ period ∥ end-date)
     Recurring {
+        /// Period between payments in seconds
         period_seconds: u64,
+        
+        /// Optional end date after which the commitment expires
         end_date: Option<DateTime<Utc>>,
     },
 }
 
-/// Represents a smart commitment as defined in section 10
+/// Represents a smart commitment as defined in section 10 of the DSM whitepaper
+///
+/// A smart commitment is a cryptographically secure, deterministic conditional
+/// that can trigger token transfers when specific conditions are met.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartCommitment {
     /// Recipient of the commitment
@@ -58,7 +124,7 @@ pub struct SmartCommitment {
     /// Condition for the commitment
     pub condition: CommitmentCondition,
 
-    /// Commitment hash as per section 10 equations
+    /// Commitment hash as per section 10 whitepaper equations
     pub commitment_hash: Vec<u8>,
 
     /// Optional encrypted payload for secure transport
@@ -69,7 +135,10 @@ pub struct SmartCommitment {
     pub timestamp: u64,
 }
 
-/// SDK for creating and managing smart commitments as per section 10
+/// SDK for creating and managing smart commitments as per section 10 of the DSM whitepaper
+///
+/// This SDK provides functionality for creating, encrypting, decrypting, and executing
+/// various types of smart commitments with quantum-resistant security.
 pub struct SmartCommitmentSDK {
     /// Reference to the core SDK
     core_sdk: Arc<CoreSDK>,
@@ -80,6 +149,25 @@ pub struct SmartCommitmentSDK {
 
 impl SmartCommitmentSDK {
     /// Create a new SmartCommitmentSDK instance
+    ///
+    /// # Arguments
+    ///
+    /// * `core_sdk` - An Arc-wrapped CoreSDK instance for state management
+    ///
+    /// # Returns
+    ///
+    /// A new SmartCommitmentSDK instance
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use std::sync::Arc;
+    ///
+    /// let core_sdk = Arc::new(CoreSDK::new());
+    /// let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    /// ```
     pub fn new(core_sdk: Arc<CoreSDK>) -> Self {
         Self {
             core_sdk,
@@ -87,7 +175,41 @@ impl SmartCommitmentSDK {
         }
     }
 
-    /// Create a time-locked commitment as defined in section 10
+    /// Create a time-locked commitment as defined in section 10 of the DSM whitepaper
+    ///
+    /// Creates a commitment that will unlock at a specific time in the future,
+    /// allowing for deferred payments and scheduled transactions.
+    ///
+    /// # Arguments
+    ///
+    /// * `recipient` - Address of the recipient
+    /// * `amount` - Amount of tokens to transfer
+    /// * `unlock_time` - Time when the commitment becomes executable
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The created time-locked commitment
+    /// * `Err(DsmError)` - If commitment creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use chrono::{Duration, Utc};
+    /// use std::sync::Arc;
+    ///
+    /// let core_sdk = Arc::new(CoreSDK::new());
+    /// let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    /// // Create a commitment that unlocks in 7 days
+    /// let unlock_time = Utc::now() + Duration::days(7);
+    /// let commitment = commitment_sdk.create_time_locked_commitment(
+    ///     "recipient_address", 
+    ///     100, // amount
+    ///     unlock_time
+    /// ).unwrap();
+    /// ```
     pub fn create_time_locked_commitment(
         &self,
         recipient: &str,
@@ -118,7 +240,41 @@ impl SmartCommitmentSDK {
         })
     }
 
-    /// Create a conditional (oracle-based) commitment as defined in section 10
+    /// Create a conditional (oracle-based) commitment as defined in section 10 of the DSM whitepaper
+    ///
+    /// Creates a commitment that will execute when an external condition verified
+    /// by an oracle is met, allowing for condition-based transfers.
+    ///
+    /// # Arguments
+    ///
+    /// * `recipient` - Address of the recipient
+    /// * `amount` - Amount of tokens to transfer
+    /// * `condition` - Condition expression to be verified (e.g., "temperature > 30°C")
+    /// * `oracle_id` - Identifier of the oracle that will verify the condition
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The created conditional commitment
+    /// * `Err(DsmError)` - If commitment creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use std::sync::Arc;
+    ///
+    /// let core_sdk = Arc::new(CoreSDK::new());
+    /// let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    /// // Create a commitment that executes when a condition is met
+    /// let commitment = commitment_sdk.create_conditional_commitment(
+    ///     "recipient_address",
+    ///     100, // amount
+    ///     "temperature > 30", // condition
+    ///     "weather_oracle_123" // oracle ID
+    /// ).unwrap();
+    /// ```
     pub fn create_conditional_commitment(
         &self,
         recipient: &str,
@@ -154,7 +310,43 @@ impl SmartCommitmentSDK {
         })
     }
 
-    /// Create a recurring payment commitment as defined in section 10
+    /// Create a recurring payment commitment as defined in section 10 of the DSM whitepaper
+    ///
+    /// Creates a commitment that will execute periodically according to a specified
+    /// schedule, enabling subscription payments and regular transfers.
+    ///
+    /// # Arguments
+    ///
+    /// * `recipient` - Address of the recipient
+    /// * `amount` - Amount of tokens to transfer in each payment
+    /// * `period_seconds` - Period between payments in seconds
+    /// * `end_date` - Optional end date after which the commitment expires
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The created recurring commitment
+    /// * `Err(DsmError)` - If commitment creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use chrono::{Duration, Utc};
+    /// use std::sync::Arc;
+    ///
+    /// let core_sdk = Arc::new(CoreSDK::new());
+    /// let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    /// // Create a monthly subscription commitment for 1 year
+    /// let end_date = Utc::now() + Duration::days(365);
+    /// let commitment = commitment_sdk.create_recurring_commitment(
+    ///     "recipient_address",
+    ///     50, // amount per payment
+    ///     30 * 24 * 60 * 60, // 30 days in seconds
+    ///     Some(end_date)
+    /// ).unwrap();
+    /// ```
     pub fn create_recurring_commitment(
         &self,
         recipient: &str,
@@ -193,7 +385,49 @@ impl SmartCommitmentSDK {
         })
     }
 
-    /// Encrypt a commitment for secure transport as defined in section 10
+    /// Encrypt a commitment for secure transport as defined in section 10 of the DSM whitepaper
+    ///
+    /// Encrypts a commitment using the quantum-resistant CRYSTALS-Kyber algorithm,
+    /// ensuring that only the intended recipient can decrypt and execute it.
+    ///
+    /// # Arguments
+    ///
+    /// * `commitment` - The commitment to encrypt
+    /// * `recipient_public_key` - The recipient's public key for encryption
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The encrypted commitment
+    /// * `Err(DsmError)` - If encryption failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use chrono::Utc;
+    /// use std::sync::Arc;
+    ///
+    /// fn encrypt_example(recipient_public_key: Vec<u8>) {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Create a time-locked commitment
+    ///     let commitment = commitment_sdk.create_time_locked_commitment(
+    ///         "recipient_address",
+    ///         100,
+    ///         Utc::now()
+    ///     ).unwrap();
+    ///
+    ///     // Encrypt the commitment for secure transport
+    ///     let encrypted_commitment = commitment_sdk.encrypt_commitment(
+    ///         &commitment,
+    ///         &recipient_public_key
+    ///     ).unwrap();
+    ///
+    ///     assert!(encrypted_commitment.encrypted_payload.is_some());
+    /// }
+    /// ```
     pub fn encrypt_commitment(
         &self,
         commitment: &SmartCommitment,
@@ -242,7 +476,41 @@ impl SmartCommitmentSDK {
         Ok(encrypted_commitment)
     }
 
-    /// Decrypt a received encrypted commitment as defined in section 10
+    /// Decrypt a received encrypted commitment as defined in section 10 of the DSM whitepaper
+    ///
+    /// Decrypts a commitment that was encrypted for secure transport,
+    /// using the recipient's secret key.
+    ///
+    /// # Arguments
+    ///
+    /// * `encrypted_payload` - The encrypted commitment payload
+    /// * `recipient_secret_key` - The recipient's secret key for decryption
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The decrypted commitment
+    /// * `Err(DsmError)` - If decryption failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use std::sync::Arc;
+    ///
+    /// fn decrypt_example(encrypted_payload: Vec<u8>, recipient_secret_key: Vec<u8>) {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Decrypt the commitment
+    ///     let commitment = commitment_sdk.decrypt_commitment(
+    ///         &encrypted_payload,
+    ///         &recipient_secret_key
+    ///     ).unwrap();
+    ///
+    ///     println!("Decrypted commitment for recipient: {}", commitment.recipient);
+    /// }
+    /// ```
     pub fn decrypt_commitment(
         &self,
         encrypted_payload: &[u8],
@@ -303,6 +571,46 @@ impl SmartCommitmentSDK {
     }
 
     /// Execute a commitment when its condition is satisfied
+    ///
+    /// Creates an operation to execute the commitment once its condition
+    /// has been verified as satisfied.
+    ///
+    /// # Arguments
+    ///
+    /// * `commitment` - The commitment to execute
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The operation to execute the commitment
+    /// * `Err(DsmError)` - If execution preparation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use chrono::Utc;
+    /// use std::sync::Arc;
+    ///
+    /// async fn execute_example() {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk.clone());
+    ///
+    ///     // Create a commitment
+    ///     let commitment = commitment_sdk.create_time_locked_commitment(
+    ///         "recipient_address",
+    ///         100,
+    ///         Utc::now() // Immediately executable
+    ///     ).unwrap();
+    ///
+    ///     // Prepare the execution operation
+    ///     let operation = commitment_sdk.execute_commitment(&commitment).unwrap();
+    ///
+    ///     // Execute the operation
+    ///     let new_state = core_sdk.execute_transition(operation).await.unwrap();
+    ///     println!("Commitment executed in state: {}", new_state.state_number);
+    /// }
+    /// ```
     pub fn execute_commitment(&self, commitment: &SmartCommitment) -> Result<Operation, DsmError> {
         Ok(Operation::Transfer {
             token_id: commitment.token_id.clone(),
@@ -319,13 +627,57 @@ impl SmartCommitmentSDK {
     }
 
     /// Record a commitment execution in the cache
+    ///
+    /// Records that a commitment has been executed to prevent double-execution
+    /// and ensure proper auditing.
+    ///
+    /// # Arguments
+    ///
+    /// * `commitment` - The executed commitment
     pub fn record_execution(&mut self, commitment: &SmartCommitment) {
         let now = chrono::Utc::now().timestamp() as u64;
         self.executed_commitments
             .insert(commitment.commitment_hash.clone(), now);
     }
 
-    /// Verify a commitment's integrity as per section 10
+    /// Verify a commitment's integrity as per section 10 of the DSM whitepaper
+    ///
+    /// Verifies that a commitment has not been tampered with by recalculating
+    /// its hash and comparing it with the stored hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `commitment` - The commitment to verify
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bool)` - True if verification succeeded, false otherwise
+    /// * `Err(DsmError)` - If verification process failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use chrono::Utc;
+    /// use std::sync::Arc;
+    ///
+    /// fn verify_example() {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Create a commitment
+    ///     let commitment = commitment_sdk.create_time_locked_commitment(
+    ///         "recipient_address",
+    ///         100,
+    ///         Utc::now()
+    ///     ).unwrap();
+    ///
+    ///     // Verify the commitment's integrity
+    ///     let is_valid = commitment_sdk.verify_commitment(&commitment).unwrap();
+    ///     assert!(is_valid);
+    /// }
+    /// ```
     pub fn verify_commitment(&self, commitment: &SmartCommitment) -> Result<bool, DsmError> {
         // Get the current state
         let current_state = self.core_sdk.get_current_state()?;
@@ -379,7 +731,37 @@ impl SmartCommitmentSDK {
         Ok(calculated_hash == commitment.commitment_hash)
     }
 
-    /// Create a deterministic pre-commit forking structure as described in section 11
+    /// Create a deterministic pre-commit forking structure as described in section 11 of the DSM whitepaper
+    ///
+    /// Creates a commitment structure that enables deterministic branching based on
+    /// external conditions, allowing for multiple possible execution paths.
+    ///
+    /// # Arguments
+    ///
+    /// * `paths` - Vector of potential execution path operations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<u8>)` - The fork commitment hash
+    /// * `Err(DsmError)` - If fork creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use dsm::types::operations::Operation;
+    /// use std::sync::Arc;
+    ///
+    /// fn create_fork_example(paths: Vec<Operation>) {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Create a fork commitment
+    ///     let fork_hash = commitment_sdk.create_conditional_execution_paths(paths).unwrap();
+    ///     println!("Created fork commitment: {:?}", hex::encode(&fork_hash));
+    /// }
+    /// ```
     pub fn create_conditional_execution_paths(
         &self,
         paths: Vec<Operation>,
@@ -403,6 +785,43 @@ impl SmartCommitmentSDK {
     }
 
     /// Selects a deterministic execution path based on an external condition
+    ///
+    /// Selects and verifies one of the potential execution paths based on
+    /// an external condition, ensuring deterministic behavior.
+    ///
+    /// # Arguments
+    ///
+    /// * `fork_commitment` - The fork commitment hash
+    /// * `path_index` - Index of the path to select
+    /// * `paths` - Vector of potential execution path operations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The selected operation path
+    /// * `Err(DsmError)` - If path selection failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use dsm::types::operations::Operation;
+    /// use std::sync::Arc;
+    ///
+    /// fn select_path_example(fork_hash: Vec<u8>, paths: Vec<Operation>) {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Select path based on external condition (path_index = 0)
+    ///     let selected_operation = commitment_sdk.select_execution_path(
+    ///         &fork_hash,
+    ///         0, // Path index based on external condition
+    ///         &paths
+    ///     ).unwrap();
+    ///
+    ///     println!("Selected execution path: {:?}", selected_operation);
+    /// }
+    /// ```
     pub fn select_execution_path(
         &self,
         fork_commitment: &[u8],
@@ -447,6 +866,43 @@ impl SmartCommitmentSDK {
     }
 
     /// Create a ROOT token payment commitment
+    ///
+    /// Creates a simple payment commitment for transferring ROOT tokens,
+    /// which can be executed immediately.
+    ///
+    /// # Arguments
+    ///
+    /// * `sender` - Address of the sender
+    /// * `recipient` - Address of the recipient
+    /// * `amount` - Amount of ROOT tokens to transfer
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SmartCommitment)` - The created payment commitment
+    /// * `Err(DsmError)` - If commitment creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dsm_sdk::smart_commitment_sdk::SmartCommitmentSDK;
+    /// use dsm_sdk::core_sdk::CoreSDK;
+    /// use std::sync::Arc;
+    ///
+    /// fn payment_example() {
+    ///     let core_sdk = Arc::new(CoreSDK::new());
+    ///     let commitment_sdk = SmartCommitmentSDK::new(core_sdk);
+    ///
+    ///     // Create a simple payment commitment
+    ///     let commitment = commitment_sdk.create_root_payment_commitment(
+    ///         "sender_address",
+    ///         "recipient_address",
+    ///         100 // amount
+    ///     ).unwrap();
+    ///
+    ///     println!("Created payment commitment: {:?}", 
+    ///              hex::encode(&commitment.commitment_hash));
+    /// }
+    /// ```
     pub fn create_root_payment_commitment(
         &self,
         sender: &str,
@@ -503,7 +959,14 @@ impl SmartCommitmentSDK {
         Ok(State::default())
     }
 
-    // Create the commitment operation
+    /// Create a commitment operation in the DSM system
+    ///
+    /// Creates an operation for adding a new commitment to the DSM system.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The commitment creation operation
+    /// * `Err(DsmError)` - If operation creation failed
     pub fn create_commitment_operation(&self) -> Result<Operation, DsmError> {
         Ok(Operation::Create {
             message: "Create smart commitment".to_string(),
@@ -516,7 +979,14 @@ impl SmartCommitmentSDK {
         })
     }
 
-    // Update commitment operation
+    /// Update a commitment operation in the DSM system
+    ///
+    /// Creates an operation for updating an existing commitment in the DSM system.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Operation)` - The commitment update operation
+    /// * `Err(DsmError)` - If operation creation failed
     pub fn update_commitment_operation(&self) -> Result<Operation, DsmError> {
         Ok(Operation::Update {
             identity_id: "".to_string(),

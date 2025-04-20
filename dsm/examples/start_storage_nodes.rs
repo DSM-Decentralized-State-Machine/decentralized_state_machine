@@ -1,6 +1,5 @@
-use dsm::core::state_machine::genesis::{StorageNode, GenesisParams, GenesisCreator};
+use dsm::core::state_machine::genesis::{StorageNode, GenesisParams, GenesisCreator, MpcContribution};
 use dsm::crypto::hash::blake3;
-use dsm::crypto_verification::multiparty_computation::MpcContribution;
 use dsm::types::state_types::DeviceInfo;
 use std::collections::HashMap;
 use std::error::Error;
@@ -201,7 +200,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     println!("Genesis wrapper created:");
     println!("  - Device ID: {}", genesis_wrapper.device_id);
-    println!("  - Participants: {}", genesis_wrapper.participants.len());
+    println!("  - Ceremony ID: {}", genesis_wrapper.ceremony_id);
     println!("  - Timestamp: {}", genesis_wrapper.timestamp);
     
     // Stop all nodes

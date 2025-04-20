@@ -173,6 +173,11 @@ pub enum DsmError {
     /// Represents errors related to external commitment operations or verification.
     ExternalCommitment(String),
 
+    /// Identity errors
+    ///
+    /// Represents errors related to identity operations or verification.
+    Identity(String),
+
     /// Invalid ciphertext error
     InvalidCiphertext,
 
@@ -491,6 +496,14 @@ impl DsmError {
         DsmError::ExternalCommitment(message.into())
     }
 
+    /// Creates a new identity error
+    ///
+    /// # Arguments
+    /// * `message` - Description of the identity error
+    pub fn identity(message: impl Into<String>) -> Self {
+        DsmError::Identity(message.into())
+    }
+
     /// Creates a new feature not available error
     ///
     /// # Arguments
@@ -782,6 +795,7 @@ impl Display for DsmError {
             DsmError::ForwardCommitment(msg) => write!(f, "Forward commitment error: {}", msg),
             DsmError::Relationship(msg) => write!(f, "Relationship error: {}", msg),
             DsmError::ExternalCommitment(msg) => write!(f, "External commitment error: {}", msg),
+            DsmError::Identity(msg) => write!(f, "Identity error: {}", msg),
             DsmError::InvalidCiphertext => write!(f, "Invalid ciphertext"),
             DsmError::LockError => write!(f, "Failed to acquire lock"),
             DsmError::Generic { message, source } => {
