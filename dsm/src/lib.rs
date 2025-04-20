@@ -1,7 +1,7 @@
 //! # DSM: Decentralized State Machine
 //!
 //! DSM is a secure, distributed state machine implementation that ensures deterministic
-//! state evolution with cryptographic guarantees. It enables resilient, trustless 
+//! state evolution with cryptographic guarantees. It enables resilient, trustless
 //! applications through a provable state transition system.
 //!
 //! ## Key Features
@@ -54,15 +54,15 @@ pub use types::{
 };
 
 /// # DSM SDK: Decentralized State Machine Developer Library
-/// 
+///
 /// This section re-exports the main modules and functions for easier access by library users.
 /// These components provide the core functionality needed to build DSM applications.
-
 /// Re-export primary modules from the core state machine implementation
+///
 pub use crate::core::state_machine;
 
 /// Re-export identity management functionality
-/// 
+///
 /// Provides key identity operations including:
 /// * `Identity`: Core identity type for DSM
 /// * `create_identity`: Function to create new identities
@@ -70,7 +70,7 @@ pub use crate::core::state_machine;
 pub use crate::core::identity::{Identity, create_identity, add_device};
 
 /// Re-export unilateral transaction functionality
-/// 
+///
 /// Unilateral transactions allow single-party operations in a DSM system, including:
 /// * `process_unilateral_transactions`: Function to handle pending unilateral transactions
 /// * `send_unilateral_transaction`: Function to initiate a unilateral transaction
@@ -81,7 +81,7 @@ pub use crate::unilateral::{
 };
 
 /// Re-export DLV (Deterministic Limbo Vault) functionality
-/// 
+///
 /// DLV provides secure asset management with cryptographic guarantees, including:
 /// * `DLVManager`: Core management interface for Deterministic Limbo Vaults
 /// * `FulfillmentMechanism`: Types and functions for vault condition fulfillment
@@ -89,43 +89,41 @@ pub use crate::vault::dlv_manager::DLVManager;
 pub use crate::vault::fulfillment::FulfillmentMechanism;
 
 /// Initialize the DSM SDK
-/// 
+///
 /// This function must be called before any DSM operations are performed.
 /// It initializes critical subsystems including cryptography and recovery mechanisms.
-/// 
+///
 /// # Example
 /// ```
 /// use dsm::initialize;
-/// 
-/// fn main() {
-///     // Initialize DSM before any operations
-///     initialize();
-///     
-///     // Now DSM operations can be performed safely
-///     // ...
-/// }
+///
+/// // Initialize DSM before any operations
+/// initialize();
+///
+/// // Now DSM operations can be performed safely
+/// // ...
 /// ```
+///
 pub fn initialize() {
     crypto::init_crypto();
     recovery::init_recovery();
 }
 
 /// Returns the version of the SDK
-/// 
+///
 /// Retrieves the current version of the DSM SDK from cargo package metadata.
-/// 
+///
 /// # Returns
-/// 
+///
 /// A string containing the version number in semver format (e.g., "0.1.0")
-/// 
+///
 /// # Example
 /// ```
 /// use dsm::version;
-/// 
-/// fn main() {
-///     println!("DSM SDK Version: {}", version());
-/// }
+///
+/// println!("DSM SDK Version: {}", version());
 /// ```
+///
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
