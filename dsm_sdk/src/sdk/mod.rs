@@ -57,7 +57,7 @@ pub mod wallet_sdk;
 
 // Re-export primary SDK components for easier access
 pub use bluetooth_transport::{BluetoothMode, BluetoothTransport};
-pub use core_sdk::CoreSDK;
+pub use core_sdk::CoreSDK; 
 pub use hashchain_sdk::HashChainSDK;
 pub use identity_sdk::IdentitySDK;
 pub use pokemon_bluetooth_sdk::PokemonBluetoothSDK;
