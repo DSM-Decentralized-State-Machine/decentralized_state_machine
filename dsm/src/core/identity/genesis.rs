@@ -4,9 +4,9 @@ use pqcrypto_traits::kem::Ciphertext;
 use pqcrypto_traits::kem::SharedSecret;
 
 use pqcrypto_mlkem as kyber;
-use pqcrypto_sphincsplus as sphincsplus;
 use pqcrypto_traits::kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey};
-use pqcrypto_traits::sign::{DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey};
+// Use our own SPHINCS+ implementation
+use crate::crypto::sphincs;
 use rand::{thread_rng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_512};
@@ -88,63 +88,25 @@ pub struct GenesisState {
 
 impl SigningKey {
     fn new() -> Result<Self, DsmError> {
-        // Generate SPHINCS+ keypair (quantum-resistant)
-        let (pk, sk) = sphincsplus::sphincssha2128fsimple::keypair();
+        // Generate SPHINCS+ keypair (quantum-resistant) using our implementation
+        let (pk, sk) = sphincs::generate_sphincs_keypair()?;
 
         Ok(Self {
-            public_key: pk.as_bytes().to_vec(),
-            secret_key: sk.as_bytes().to_vec(),
+            public_key: pk,
+            secret_key: sk,
         })
     }
 
     #[allow(dead_code)]
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, DsmError> {
-        // Convert secret key back to SPHINCS+ format
-        let sk = match sphincsplus::sphincssha2128fsimple::SecretKey::from_bytes(&self.secret_key) {
-            Ok(key) => key,
-            Err(_) => {
-                return Err(DsmError::crypto(
-                    "Invalid SPHINCS+ secret key",
-                    None::<std::io::Error>,
-                ))
-            }
-        };
-
-        // Sign the message
-        let signature = sphincsplus::sphincssha2128fsimple::detached_sign(message, &sk);
-        Ok(signature.as_bytes().to_vec())
+        // Sign using our SPHINCS+ implementation
+        sphincs::sphincs_sign(&self.secret_key, message)
     }
 
     #[allow(dead_code)]
     fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, DsmError> {
-        // Convert public key back to SPHINCS+ format
-        let pk = match sphincsplus::sphincssha2128fsimple::PublicKey::from_bytes(&self.public_key) {
-            Ok(key) => key,
-            Err(_) => {
-                return Err(DsmError::crypto(
-                    "Invalid SPHINCS+ public key",
-                    None::<std::io::Error>,
-                ))
-            }
-        };
-
-        // Convert signature back to SPHINCS+ format
-        let sig = match sphincsplus::sphincssha2128fsimple::DetachedSignature::from_bytes(signature)
-        {
-            Ok(s) => s,
-            Err(_) => {
-                return Err(DsmError::crypto(
-                    "Invalid SPHINCS+ signature",
-                    None::<std::io::Error>,
-                ))
-            }
-        };
-
-        // Verify the signature
-        match sphincsplus::sphincssha2128fsimple::verify_detached_signature(&sig, message, &pk) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        // Verify using our SPHINCS+ implementation
+        sphincs::sphincs_verify(&self.public_key, message, signature)
     }
 }
 
@@ -577,11 +539,11 @@ mod tests {
         // just verify the keys have expected length
         assert_eq!(
             genesis_result.signing_key.public_key.len(),
-            sphincsplus::sphincssha2128fsimple::public_key_bytes()
+            sphincs::public_key_bytes()
         );
         assert_eq!(
             genesis_result.signing_key.secret_key.len(),
-            sphincsplus::sphincssha2128fsimple::secret_key_bytes()
+            sphincs::secret_key_bytes()
         );
         assert_eq!(
             genesis_result.kyber_keypair.public_key.len(),

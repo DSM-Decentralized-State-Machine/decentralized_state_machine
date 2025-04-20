@@ -22,10 +22,9 @@ pub mod vault; // Module for Deterministic Limbo Vault (DLV)
 pub use crypto::{
     blake3 as hash, decrypt_from_sender, encrypt_for_recipient, generate_keypair, init_crypto,
     sign_data,
-    sphincs::{generate_sphincs_keypair, sphincs_sign, sphincs_sign_message, sphincs_verify},
+    sphincs::{generate_sphincs_keypair, sphincs_sign, sphincs_verify},
     verify_signature,
-};
-pub use types::{
+};pub use types::{
     error::DsmError,
     policy_types::{PolicyAnchor, PolicyFile, TokenPolicy},
 };

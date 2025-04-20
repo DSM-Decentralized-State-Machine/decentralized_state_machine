@@ -13,8 +13,7 @@
 use crate::types::error::DsmError;
 use crate::types::operations::Operation;
 use crate::types::state_types::State;
-use pqcrypto_sphincsplus::sphincssha2256fsimple::{detached_sign, verify_detached_signature, PublicKey};
-use pqcrypto_traits::sign::{DetachedSignature, PublicKey as _, SecretKey as _};
+use crate::crypto::sphincs;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{fence, Ordering};
@@ -783,20 +782,8 @@ impl PreCommitment {
         for (signer_id, signature) in &self.signatures {
             let public_key_bytes = &public_keys[signer_id];
 
-            let pk =
-                PublicKey::from_bytes(public_key_bytes).map_err(|_| CommitmentError::Crypto {
-                    context: format!("Invalid public key format for signer {}", signer_id),
-                    source: None,
-                })?;
-
-            let sig =
-                DetachedSignature::from_bytes(signature).map_err(|_| CommitmentError::Crypto {
-                    context: format!("Invalid signature format from signer {}", signer_id),
-                    source: None,
-                })?;
-
-            // SPHINCS+ verification is constant-time
-            if verify_detached_signature(&sig, &self.hash, &pk).is_err() {
+            // Use our pure Rust implementation of SPHINCS+
+            if sphincs::sphincs_verify(public_key_bytes, &self.hash, signature).is_err() {
                 return Ok(false);
             }
         }
@@ -1227,14 +1214,16 @@ impl ForwardLinkedCommitment {
     /// - Uses SPHINCS+ post-quantum signature algorithm
     /// - Signs the commitment hash for compact representation
     pub fn sign_as_entity(&mut self, private_key: &[u8]) -> Result<(), DsmError> {
-        let sk = pqcrypto_sphincsplus::sphincssha2256fsimple::SecretKey::from_bytes(private_key)
-            .map_err(|_| CommitmentError::Crypto {
-                context: "Invalid entity secret key format".into(),
+        // Use our pure Rust implementation of SPHINCS+
+        let signature = match sphincs::sphincs_sign(private_key, &self.commitment_hash) {
+            Ok(sig) => sig,
+            Err(_) => return Err(CommitmentError::Crypto {
+                context: "Failed to sign with SPHINCS+".into(),
                 source: None,
-            })?;
+            }.into())
+        };
 
-        let signature = detached_sign(&self.commitment_hash, &sk);
-        self.entity_signature = Some(signature.as_bytes().to_vec());
+        self.entity_signature = Some(signature);
         Ok(())
     }
 
@@ -1250,14 +1239,16 @@ impl ForwardLinkedCommitment {
     /// - Uses SPHINCS+ post-quantum signature algorithm
     /// - Signs the commitment hash for compact representation
     pub fn sign_as_counterparty(&mut self, private_key: &[u8]) -> Result<(), DsmError> {
-        let sk = pqcrypto_sphincsplus::sphincssha2256fsimple::SecretKey::from_bytes(private_key)
-            .map_err(|_| CommitmentError::Crypto {
-                context: "Invalid counterparty secret key format".into(),
-                source: None,
-            })?;
+        // Use our pure Rust implementation of SPHINCS+
+        let signature = match sphincs::sphincs_sign(private_key, &self.commitment_hash) {
+            Ok(sig) => sig,
+            Err(e) => return Err(CommitmentError::Crypto {
+                context: "Failed to sign with SPHINCS+".into(),
+                source: Some(Box::new(e)),
+            }.into()),
+        };
 
-        let signature = detached_sign(&self.commitment_hash, &sk);
-        self.counterparty_signature = Some(signature.as_bytes().to_vec());
+        self.counterparty_signature = Some(signature);
         Ok(())
     }
 
@@ -1331,23 +1322,15 @@ impl ForwardLinkedCommitment {
     /// - Uses SPHINCS+ post-quantum verification primitives
     /// - Returns useful error context for debugging while maintaining security
     pub fn verify_entity_signature(&self, entity_public_key: &[u8]) -> Result<bool, DsmError> {
+        // Remove the conversion attempts that reference undefined types
         if let Some(ref sig) = self.entity_signature {
-            let pk =
-                PublicKey::from_bytes(entity_public_key).map_err(|_| CommitmentError::Crypto {
-                    context: "Invalid entity public key format".into(),
+            // Use our pure Rust implementation of SPHINCS+
+            match sphincs::sphincs_verify(entity_public_key, &self.commitment_hash, sig) {
+                Ok(valid) => Ok(valid),
+                Err(_) => Err(CommitmentError::Crypto {
+                    context: "Error verifying entity signature".into(),
                     source: None,
-                })?;
-
-            let signature =
-                DetachedSignature::from_bytes(sig).map_err(|_| CommitmentError::Crypto {
-                    context: "Invalid entity signature format".into(),
-                    source: None,
-                })?;
-
-            // SPHINCS+ verification is constant-time
-            match verify_detached_signature(&signature, &self.commitment_hash, &pk) {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+                }.into()),
             }
         } else {
             Ok(false)
@@ -1370,23 +1353,13 @@ impl ForwardLinkedCommitment {
         counterparty_public_key: &[u8],
     ) -> Result<bool, DsmError> {
         if let Some(ref sig) = self.counterparty_signature {
-            let pk = PublicKey::from_bytes(counterparty_public_key).map_err(|_| {
-                CommitmentError::Crypto {
-                    context: "Invalid counterparty public key format".into(),
+            // Use our pure Rust implementation of SPHINCS+
+            match sphincs::sphincs_verify(counterparty_public_key, &self.commitment_hash, sig) {
+                Ok(valid) => Ok(valid),
+                Err(_) => Err(CommitmentError::Crypto {
+                    context: "Error verifying counterparty signature".into(),
                     source: None,
-                }
-            })?;
-
-            let signature =
-                DetachedSignature::from_bytes(sig).map_err(|_| CommitmentError::Crypto {
-                    context: "Invalid counterparty signature format".into(),
-                    source: None,
-                })?;
-
-            // SPHINCS+ verification is constant-time
-            match verify_detached_signature(&signature, &self.commitment_hash, &pk) {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+                }.into()),
             }
         } else {
             Ok(false)

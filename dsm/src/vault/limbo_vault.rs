@@ -1286,7 +1286,7 @@ mod tests {
     #[test]
     fn test_limbo_vault_creation() -> Result<(), DsmError> {
         // Generate test keypair
-        let (pk, sk) = sphincs::generate_sphincs_keypair();
+        let (pk, sk) = sphincs::generate_sphincs_keypair()?;
 
         // Create test content
         let content = b"Test payload";

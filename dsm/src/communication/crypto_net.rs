@@ -125,7 +125,8 @@ impl KeyPair {
     /// Creates a new Kyber key pair
     pub fn new() -> Self {
         // Generate a new Kyber keypair using the core crypto module
-        let (public_key, private_key) = kyber::generate_kyber_keypair()?;
+        let (public_key, private_key) = kyber::generate_kyber_keypair()
+            .expect("Failed to generate Kyber keypair");
 
         Self {
             public_key,

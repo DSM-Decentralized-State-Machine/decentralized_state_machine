@@ -28,6 +28,7 @@ useless-vec = "allow"
 default = []
 bluetooth = ["tokio-stream"]
 reqwest = ["dep:reqwest"]
+threadsafe = []
 
 [dependencies]
 # Core numeric processing
@@ -78,7 +79,7 @@ ff = "0.13.0"
 # Quantum-resistant cryptography
 pqcrypto-traits = { version = "0.3.5", features = ["std"] }
 pqcrypto-mlkem = "0.1.0"  # Kyber KEM implementation
-pqcrypto-sphincsplus = { version = "0.7.0", features = ["std"] }
+# pqcrypto-sphincsplus has been replaced with a pure Rust implementation
 
 # Networking
 rustls = { version = "0.21.10", features = ["dangerous_configuration"] }

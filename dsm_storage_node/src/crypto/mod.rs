@@ -34,8 +34,8 @@ pub fn generate_node_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
     debug!("Generating node keypair");
 
     // Use SPHINCS+ for node identity
-    let (public_key, private_key) = generate_sphincs_keypair();
-
+    let (public_key, private_key) = generate_sphincs_keypair()
+        .map_err(|e| StorageNodeError::Encryption(format!("Failed to generate SPHINCS+ keypair: {}", e)))?;
     Ok((public_key.to_vec(), private_key.to_vec()))
 }
 

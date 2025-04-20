@@ -63,7 +63,7 @@ pub fn get_private_key(id: &str) -> Result<Vec<u8>, DsmError> {
 /// Initialize cryptography subsystem
 pub fn init_crypto() {
     // Initialize the post-quantum cryptographic subsystem
-    kyber::init_kyber();
+    let _ = kyber::init_kyber();
     sphincs::init_sphincs();
     rng::ensure_rng_initialization();
     debug!("Cryptography subsystem initialized");
@@ -73,7 +73,7 @@ pub fn generate_keypair() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     // Generate Kyber key pair for encryption
     let (kyber_public, kyber_secret) = kyber::generate_kyber_keypair().unwrap();
     // Generate SPHINCS+ key pair for signatures
-    let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair();
+    let (sphincs_public, sphincs_secret) = sphincs::generate_sphincs_keypair().unwrap();
 
     (kyber_public, kyber_secret, sphincs_public, sphincs_secret)
 }
