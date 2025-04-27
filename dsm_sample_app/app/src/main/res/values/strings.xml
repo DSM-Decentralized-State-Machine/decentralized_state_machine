@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DSM Sample App</string>
+    
+    <!-- MainActivity -->
+    <string name="check_connection">Check Connection</string>
+    <string name="connected">Connected to DSM backend</string>
+    <string name="not_connected">Not connected to DSM backend</string>
+    
+    <!-- IdentityActivity -->
+    <string name="create_identity">Create Identity</string>
+    <string name="device_id_hint">Device ID (optional)</string>
+    <string name="create">Create</string>
+    <string name="identities">Identities</string>
+    <string name="refresh">Refresh</string>
+    <string name="no_identities">No identities found</string>
+    
+    <!-- VaultActivity -->
+    <string name="create_vault">Create Vault</string>
+    <string name="identity_id">Identity ID</string>
+    <string name="vault_name_hint">Vault Name (optional)</string>
+    <string name="vaults">Vaults</string>
+    <string name="no_vaults">No vaults found</string>
+    
+    <!-- OperationsActivity -->
+    <string name="apply_operation">Apply Operation</string>
+    <string name="operation_type">Operation Type</string>
+    <string name="message">Message</string>
+    <string name="apply">Apply</string>
+    <string name="operations">Operations</string>
+    <string name="no_operations">No operations found</string>
+    
+    <!-- BluetoothActivity -->
+    <string name="bluetooth_discovery">Bluetooth Discovery</string>
+    <string name="scan">Scan</string>
+    <string name="connect">Connect</string>
+    <string name="no_devices">No devices found</string>
+    
+    <!-- Common -->
+    <string name="error">Error: %1$s</string>
+    <string name="success">Success: %1$s</string>
+</resources>

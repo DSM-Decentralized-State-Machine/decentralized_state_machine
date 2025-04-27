@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="4dp"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/type_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Type: example_operation"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/message_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Message: Example operation message"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/timestamp_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Timestamp: 2023-10-24 14:30:00"
+            android:layout_marginTop="4dp"
+            android:textStyle="italic" />
+
+        <TextView
+            android:id="@+id/previous_state_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Previous: abcdef...123456"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/next_state_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Next: fedcba...654321"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/data_text_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Data: {\"key\": \"value\"}"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
+
+</androidx.cardview.widget.CardView>
