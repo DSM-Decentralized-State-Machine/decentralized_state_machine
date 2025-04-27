@@ -43,12 +43,12 @@ For comprehensive documentation on the DSM Protocol, please visit:
 
 2. Build the storage node:
    ```bash
-   cargo build --release -p dsm-storage-node
+   cargo build --release -p dsm_storage_node
    ```
 
 3. Run the storage node:
    ```bash
-   ./target/release/dsm-storage-node --config config.toml
+   ./target/release/dsm_storage_node --config config.toml
    ```
 
 ### Quick Start Example
@@ -57,13 +57,13 @@ To quickly set up a storage node with default settings:
 
 ```bash
 # Start a storage node with default in-memory configuration
-./target/release/dsm-storage-node --config config-memory.toml
+./target/release/dsm_storage_node --config config-memory.toml
 
 # For an epidemic protocol storage node (distributed)
-./target/release/dsm-storage-node --config config-epidemic.toml
+./target/release/dsm_storage_node --config config-epidemic.toml
 
 # Run storage node with custom data directory
-./target/release/dsm-storage-node --config config.toml --data-dir /path/to/data
+./target/release/dsm_storage_node --config config.toml --data-dir /path/to/data
 ```
 
 ## Configuration
