@@ -159,7 +159,7 @@ database_path = "./data/storage.db"
 
 Run the node with:
 ```bash
-./target/release/dsm-storage-node --config config.toml run
+./target/release/dsm_storage_node --config config.toml run
 ```
 
 ### In-Memory Storage
@@ -175,7 +175,7 @@ engine = "memory"
 
 Run the node with:
 ```bash
-./target/release/dsm-storage-node --config config-memory.toml run
+./target/release/dsm_storage_node --config config-memory.toml run
 ```
 
 ### Epidemic Storage (Distributed)
@@ -212,7 +212,7 @@ enable_discovery = true
 
 Run the node with:
 ```bash
-./target/release/dsm-storage-node --config config-epidemic.toml run
+./target/release/dsm_storage_node --config config-epidemic.toml run
 ```
 
 #### Testing Multi-Node Epidemic Storage
@@ -229,13 +229,13 @@ To properly test epidemic storage, you should run multiple nodes that can commun
 3. Run each node in a separate terminal:
    ```bash
    # Terminal 1
-   ./target/release/dsm-storage-node --config config-epidemic-node1.toml run
+   ./target/release/dsm_storage_node --config config-epidemic-node1.toml run
    
    # Terminal 2
-   ./target/release/dsm-storage-node --config config-epidemic-node2.toml run
+   ./target/release/dsm_storage_node --config config-epidemic-node2.toml run
    
    # Terminal 3
-   ./target/release/dsm-storage-node --config config-epidemic-node3.toml run
+   ./target/release/dsm_storage_node --config config-epidemic-node3.toml run
    ```
 
 4. Test data propagation by storing data in one node and verifying it propagates to the others:
@@ -270,13 +270,13 @@ cd DSM_Decentralized_State_Machine
 rustup update
 
 # Build the storage node in release mode
-cargo build --release -p dsm-storage-node
+cargo build --release -p dsm_storage_node
 
 # Verify the build
-ls -la target/release/dsm-storage-node
+ls -la target/release/dsm_storage_node
 ```
 
-This will compile the storage node with optimizations for production use. The executable will be located at `target/release/dsm-storage-node`.
+This will compile the storage node with optimizations for production use. The executable will be located at `target/release/dsm_storage_node`.
 
 For macOS users, you can use the provided script to create an optimized build:
 ```bash
@@ -293,7 +293,7 @@ For Linux users:
 After building, you can run the DSM storage node with your configuration:
 
 ```bash
-./target/release/dsm-storage-node --config dsm-storage-node/config.toml run
+./target/release/dsm_storage_node --config dsm_storage_node/config.toml run
 ```
 
 If successful, you should see output like this:
@@ -314,7 +314,7 @@ INFO dsm_storage_node: DSM Storage Node running. Press Ctrl+C to stop.
 If you want to run the node with staking (which may provide rewards):
 
 ```bash
-./target/release/dsm-storage-node --config dsm-storage-node/config.toml stake --amount 1000
+./target/release/dsm_storage_node --config dsm_storage_node/config.toml stake --amount 1000
 ```
 
 Note: Staking requires a minimum of 1000 tokens.
