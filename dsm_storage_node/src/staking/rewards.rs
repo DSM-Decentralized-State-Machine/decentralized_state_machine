@@ -157,6 +157,28 @@ pub struct RewardVaultManager {
     distribution_tx: mpsc::Sender<DistributionResult>,
     #[allow(dead_code)]
     distribution_rx: Mutex<mpsc::Receiver<DistributionResult>>,
+
+    /// Client public keys for verification
+    client_keys: RwLock<HashMap<String, Vec<u8>>>,
+
+    /// Node public keys for verification
+    node_keys: RwLock<HashMap<String, Vec<u8>>>,
+}
+
+/// Represents the content stored in a reward vault
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultContent {
+    /// Total token amount in this vault
+    pub token_amount: u64,
+    
+    /// Token ID (currency type)
+    pub token_id: String,
+    
+    /// Recipient mapping (node_id -> ratio)
+    pub recipients: HashMap<String, Ratio>,
+    
+    /// Additional metadata
+    pub metadata: HashMap<String, String>,
 }
 
 /// Metadata for tracking vaults
@@ -222,27 +244,28 @@ struct DistributionResult {
     #[allow(dead_code)]
     error: Option<String>,
 
-    /// Distribution details if successful
+    /// Distribution details (node_id -> amount)
     #[allow(dead_code)]
     distribution_details: Option<HashMap<String, u64>>,
 }
 
-impl RewardVaultManager {
-    /// Create a new reward vault manager
-    pub fn new(dlv_manager: Arc<DLVManager>) -> Self {
-        // Create the distribution channel
-        let (tx, rx) = mpsc::channel(100);
-
-        Self {
-            dlv_manager,
-            vault_registry: RwLock::new(HashMap::new()),
-            receipt_registry: RwLock::new(HashMap::new()),
-            rate_schedule: RwLock::new(Self::default_rate_schedule()),
-            distribution_queue: Mutex::new(Vec::new()),
-            distribution_tx: tx,
-            distribution_rx: Mutex::new(rx),
+    impl RewardVaultManager {
+        pub fn new(dlv_manager: Arc<DLVManager>) -> Self {
+            // Create the distribution channel
+            let (tx, rx) = mpsc::channel(100);
+    
+            Self {
+                dlv_manager,
+                vault_registry: RwLock::new(HashMap::new()),
+                receipt_registry: RwLock::new(HashMap::new()),
+                rate_schedule: RwLock::new(Self::default_rate_schedule()),
+                distribution_queue: Mutex::new(Vec::new()),
+                distribution_tx: tx,
+                distribution_rx: Mutex::new(rx),
+                client_keys: RwLock::new(HashMap::new()),
+                node_keys: RwLock::new(HashMap::new()),
+            }
         }
-    }
 
     /// Create default rate schedule
     fn default_rate_schedule() -> RateSchedule {
@@ -394,10 +417,7 @@ impl RewardVaultManager {
 
     /// Verify a storage receipt's signatures
     fn verify_receipt(&self, receipt: &StorageReceipt) -> Result<bool> {
-        // In a real implementation, we would verify both the client
-        // and node signatures against their public keys
-
-        // For this implementation, we'll just validate that the signatures exist
+        // Validate that the signatures exist
         if receipt.client_signature.is_empty() || receipt.node_signature.is_empty() {
             return Err(StorageNodeError::Staking(
                 "Invalid receipt: missing signatures".to_string(),
@@ -428,27 +448,104 @@ impl RewardVaultManager {
             ));
         }
 
+        // Retrieve client's public key from our records
+        let client_public_key = match self.get_client_public_key(&receipt.client_id) {
+            Some(pk) => pk,
+            None => return Err(StorageNodeError::Staking(
+                format!("Unknown client: {}", receipt.client_id)
+            )),
+        };
+
+        // Retrieve node's public key from our records
+        let node_public_key = match self.get_node_public_key(&receipt.node_id) {
+            Some(pk) => pk,
+            None => return Err(StorageNodeError::Staking(
+                format!("Unknown node: {}", receipt.node_id)
+            )),
+        };
+
+        // Verify client signature using SPHINCS+ (or your preferred signature algorithm)
+        // In a production implementation, we'd use something like:
+        match dsm::crypto::sphincs::sphincs_verify(
+            &client_public_key,
+            &receipt.receipt_hash,
+            &receipt.client_signature,
+        ) {
+            Ok(true) => {}, // Signature verified
+            Ok(false) => return Err(StorageNodeError::Staking(
+                "Invalid client signature".to_string()
+            )),
+            Err(e) => return Err(StorageNodeError::Staking(
+                format!("Error verifying client signature: {}", e)
+            )),
+        }
+
+        // Verify node signature
+        match dsm::crypto::sphincs::sphincs_verify(
+            &node_public_key, 
+            &receipt.receipt_hash,
+            &receipt.node_signature,
+        ) {
+            Ok(true) => {}, // Signature verified
+            Ok(false) => return Err(StorageNodeError::Staking(
+                "Invalid node signature".to_string()
+            )),
+            Err(e) => return Err(StorageNodeError::Staking(
+                format!("Error verifying node signature: {}", e)
+            )),
+        }
+
         Ok(true)
     }
 
-    /// Calculate rewards for a node based on its receipts
-    pub fn calculate_node_rewards(
-        &self,
-        node_id: &str,
-        period_start: u64,
-        period_end: u64,
-    ) -> Result<u64> {
-        let registry = self
-            .receipt_registry
-            .read()
-            .map_err(|_| StorageNodeError::Internal)?;
-
-        let receipts = match registry.get(node_id) {
-            Some(r) => r,
-            None => return Ok(0), // No receipts for this node
+    /// Get a client's public key (helper method)
+    fn get_client_public_key(&self, client_id: &str) -> Option<Vec<u8>> {
+        // Try to get from memory cache
+        let keys = match self.client_keys.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                error!("Failed to lock client_keys");
+                return None; // Return early on lock failure
+            }
         };
+        
+        if let Some(key) = keys.get(client_id) {
+            return Some(key.clone());
+        }
+        
+        // In a real implementation, we would fetch from a database or network registry
+        // For now, return None for unknown clients
+        None
+    }
+    
+    /// Get a node's public key (helper method)
+    fn get_node_public_key(&self, node_id: &str) -> Option<Vec<u8>> {
+        // Try to get from memory cache
+        let keys = match self.node_keys.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                error!("Failed to lock node_keys");
+                return None; // Return early on lock failure
+            }
+        };
+        
+        if let Some(key) = keys.get(node_id) {
+            return Some(key.clone());
+        }
+        
+        // In a real implementation, we would fetch from a database or network registry
+        // For now, return None for unknown nodes
+        None
+    }
 
-        // Filter receipts for the specified period
+    /// Calculate rewards for a node based on its receipts
+    pub fn calculate_node_rewards(&self, node_id: &str, period_start: u64, period_end: u64) -> Result<u64> {
+        // Get receipts for this node
+        let receipts = match self.receipt_registry.read() {
+            Ok(registry) => registry.get(node_id).cloned().unwrap_or_default(),
+            Err(_) => return Err(StorageNodeError::Internal),
+        };
+        
         let period_receipts: Vec<&StorageReceipt> = receipts
             .iter()
             .filter(|r| {
@@ -464,9 +561,9 @@ impl RewardVaultManager {
             .map_err(|_| StorageNodeError::Internal)?;
 
         let mut total_reward = 0;
-
+        
+        // Loop over the period receipts
         for receipt in period_receipts {
-            // Calculate overlap duration (in seconds)
             let overlap_start = period_start.max(receipt.service_period.0);
             let overlap_end = period_end.min(receipt.service_period.1);
             let duration = overlap_end.saturating_sub(overlap_start);
@@ -712,8 +809,7 @@ impl RewardVaultManager {
             }
         });
     }
-}
-
+    }
 /// Allow cloning the RewardVaultManager
 impl Clone for RewardVaultManager {
     fn clone(&self) -> Self {
@@ -732,27 +828,23 @@ impl Clone for RewardVaultManager {
             }),
             rate_schedule: RwLock::new(match self.rate_schedule.read() {
                 Ok(schedule) => schedule.clone(),
-                Err(_) => RewardVaultManager::default_rate_schedule(),
+                Err(_) => Self::default_rate_schedule(),
             }),
-            distribution_queue: Mutex::new(Vec::new()),
+            distribution_queue: Mutex::new(match self.distribution_queue.lock() {
+                Ok(queue) => queue.clone(),
+                Err(_) => Vec::new(),
+            }),
             distribution_tx: tx,
             distribution_rx: Mutex::new(rx),
+            client_keys: RwLock::new(match self.client_keys.read() {
+                Ok(keys) => keys.clone(),
+                Err(_) => HashMap::new(),
+            }),
+            node_keys: RwLock::new(match self.node_keys.read() {
+                Ok(keys) => keys.clone(),
+                Err(_) => HashMap::new(),
+            }),
         }
     }
 }
 
-/// Contents of a reward vault
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct VaultContent {
-    /// Total token amount in this vault
-    token_amount: u64,
-
-    /// Token ID (currency type)
-    token_id: String,
-
-    /// Recipient mapping (node_id -> ratio)
-    recipients: HashMap<String, Ratio>,
-
-    /// Additional metadata
-    metadata: HashMap<String, String>,
-}

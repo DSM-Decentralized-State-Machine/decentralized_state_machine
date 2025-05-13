@@ -1,3 +1,40 @@
+/// # DSM Storage Node
+///
+/// This is the main entry point for the DSM Storage Node application, which provides
+/// a secure, distributed, and quantum-resistant storage solution for the Decentralized
+/// State Machine ecosystem.
+///
+/// The storage node implements several types of storage backends:
+/// * SQLite - Persistent storage for individual nodes
+/// * Memory - In-memory storage for testing and development
+/// * Epidemic - Distributed storage with epidemic protocols for replication
+///
+/// ## Features
+///
+/// * RESTful API for data storage and retrieval
+/// * Configurable storage backends
+/// * Node staking for participation in the DSM network
+/// * Peer-to-peer networking with automatic discovery
+/// * Quantum-resistant encryption of all stored data
+/// * Automatic data distribution and replication
+///
+/// ## Configuration
+///
+/// The node is configured via a TOML file that specifies:
+/// * API settings (bind address, port, CORS, rate limits)
+/// * Node identity and metadata
+/// * Storage configuration (engine type, capacity, etc.)
+/// * Network settings (peers, discovery, etc.)
+///
+/// ## Usage
+///
+/// ```bash
+/// # Run with default configuration
+/// dsm-storage-node --config config.toml
+///
+/// # Run with staking to earn rewards
+/// dsm-storage-node --config config.toml stake --amount 5000
+/// ```
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process;
@@ -20,91 +57,190 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-// Define command line arguments
+/// Command line argument parser for the DSM Storage Node.
+///
+/// Provides options for specifying the configuration file and
+/// different operation modes such as regular operation or staking.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    /// The subcommand to execute (run or stake)
     #[command(subcommand)]
     command: Option<Commands>,
 
     /// Path to the configuration file
+    /// Defaults to config.toml in the current directory
     #[arg(short, long, value_name = "FILE", default_value = "config.toml")]
     config: PathBuf,
 }
 
+/// Available subcommands for the DSM Storage Node
 #[derive(Subcommand)]
 enum Commands {
-    /// Run the storage node
+    /// Run the storage node in standard mode
     Run,
-    /// Start the storage node with staking (amount in tokens)
+
+    /// Start the storage node with staking to participate
+    /// in the DSM network and earn rewards
     Stake {
+        /// Amount of tokens to stake (minimum usually 1000)
         #[arg(short, long)]
         amount: u64,
     },
 }
 
-// Configuration structs
+/// API configuration settings from the config file
+///
+/// Controls the HTTP API behavior including binding address,
+/// security features, and request limits.
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 struct ApiConfig {
+    /// IP address to bind the API server to
     bind_address: String,
+
+    /// Port number for the API server
     port: u16,
+
+    /// Whether to enable Cross-Origin Resource Sharing
     enable_cors: bool,
+
+    /// Whether to enable rate limiting for API requests
     enable_rate_limits: bool,
+
+    /// Maximum size of request bodies in bytes
     max_body_size: usize,
 }
 
+/// Node identity and metadata configuration
+///
+/// Defines the node's identity in the DSM network and
+/// provides metadata about the node operator.
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 struct NodeConfig {
+    /// Unique identifier for this node in the network
     id: String,
+
+    /// Human-readable name for the node
     name: String,
+
+    /// Geographic region where the node is located
     region: String,
+
+    /// Entity operating this node
     operator: String,
+
+    /// Version string for this node
     version: String,
+
+    /// Human-readable description of the node
     description: String,
+
+    /// Public key for node identity verification
     public_key: String,
+
+    /// Public endpoint where this node can be reached
     endpoint: String,
 }
 
+/// Storage engine configuration
+///
+/// Controls how data is stored, distributed, and managed
+/// by this storage node.
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 struct StorageConfig {
+    /// Storage engine type ("sqlite", "memory", "epidemic")
     engine: String,
+
+    /// Maximum storage capacity in bytes
     capacity: u64,
+
+    /// Directory to store data files
     data_dir: String,
+
+    /// Path to the database file (for sqlite engine)
     database_path: String,
+
+    /// Strategy for assigning data to nodes
+    /// Options: "DeterministicHashing", "RoundRobin", "LoadBalanced"
     assignment_strategy: String,
+
+    /// Strategy for data replication across nodes
+    /// Options: "FixedReplicas", "DynamicReplicas", "RegionAware"
     replication_strategy: String,
+
+    /// Number of replicas to maintain for each data item
     replica_count: u8,
+
+    /// Minimum number of different regions for replicas
     min_regions: u8,
+
+    /// Default time-to-live for data in seconds (0 = no expiration)
     default_ttl: u64,
+
+    /// Whether to enable automatic pruning of expired data
     enable_pruning: bool,
+
+    /// Interval between pruning operations in seconds
     pruning_interval: u64,
 }
 
+/// Network configuration for P2P communication
+///
+/// Controls how the node communicates with other nodes
+/// in the DSM network.
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 struct NetworkConfig {
+    /// IP address to listen on for P2P communication
     listen_addr: String,
+
+    /// Public endpoint for other nodes to connect to this node
     public_endpoint: String,
+
+    /// Port number for P2P communication
     port: u16,
+
+    /// Maximum number of concurrent P2P connections
     max_connections: u16,
+
+    /// Connection timeout in seconds
     connection_timeout: u16,
+
+    /// List of bootstrap nodes to connect to on startup
     bootstrap_nodes: Vec<String>,
+
+    /// Whether to enable automatic node discovery
     enable_discovery: bool,
+
+    /// Interval between node discovery operations in seconds
     discovery_interval: u64,
+
+    /// Maximum number of peer nodes to maintain
     max_peers: u16,
 }
 
+/// Complete application configuration
+///
+/// Combines all configuration subsections into a single struct.
 #[derive(Debug, Deserialize, Clone)]
 struct AppConfig {
+    /// API server configuration
     api: ApiConfig,
+
+    /// Node identity and metadata
     node: NodeConfig,
+
+    /// Storage engine configuration
     storage: StorageConfig,
+
+    /// Network and P2P configuration
     network: NetworkConfig,
 }
 
+// Deref implementation for convenient access to storage config
 impl std::ops::Deref for AppConfig {
     type Target = StorageConfig;
 
@@ -113,13 +249,31 @@ impl std::ops::Deref for AppConfig {
     }
 }
 
-// Actual storage implementation
+/// Storage engine abstraction that unifies different backend implementations
+///
+/// This enum provides a common interface to interact with different
+/// storage backends, allowing the rest of the application to be
+/// agnostic to the specific storage implementation.
 enum StorageEngine {
+    /// In-memory storage backend (volatile)
     Memory(MemoryStorage),
+
+    /// SQLite database storage backend (persistent)
     Sqlite(SqliteStorage),
 }
 
 impl StorageEngine {
+    /// Store a key-value pair in the storage backend
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Unique identifier for the data
+    /// * `value` - JSON value to store
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if successful
+    /// * `Err(String)` with an error message if the operation fails
     async fn store(&self, key: String, value: Value) -> Result<(), String> {
         match self {
             StorageEngine::Memory(storage) => storage.store(key, value),
@@ -127,6 +281,17 @@ impl StorageEngine {
         }
     }
 
+    /// Retrieve a value by its key
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Value))` if the key exists
+    /// * `Ok(None)` if the key does not exist
+    /// * `Err(String)` with an error message if the operation fails
     async fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
         match self {
             StorageEngine::Memory(storage) => storage.retrieve(key),
@@ -134,6 +299,17 @@ impl StorageEngine {
         }
     }
 
+    /// Delete a key-value pair from storage
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to delete
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the key existed and was deleted
+    /// * `Ok(false)` if the key did not exist
+    /// * `Err(String)` with an error message if the operation fails
     async fn delete(&self, key: &str) -> Result<bool, String> {
         match self {
             StorageEngine::Memory(storage) => storage.delete(key),
@@ -142,43 +318,103 @@ impl StorageEngine {
     }
 }
 
+/// In-memory storage implementation
+///
+/// Provides a non-persistent storage backend that keeps all data
+/// in memory. This is useful for testing and development, but
+/// all data is lost when the node restarts.
 struct MemoryStorage {
+    /// Thread-safe hash map for storing key-value pairs
     data: std::sync::RwLock<std::collections::HashMap<String, Value>>,
 }
 
 impl MemoryStorage {
+    /// Create a new in-memory storage instance
     fn new() -> Self {
         Self {
             data: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
+    /// Store a key-value pair in memory
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Unique identifier for the data
+    /// * `value` - JSON value to store
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if successful
+    /// * `Err(String)` with an error message if the operation fails
     fn store(&self, key: String, value: Value) -> Result<(), String> {
         let mut data = self.data.write().unwrap();
         data.insert(key, value);
         Ok(())
     }
 
+    /// Retrieve a value by its key from memory
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Value))` if the key exists
+    /// * `Ok(None)` if the key does not exist
+    /// * `Err(String)` with an error message if the operation fails
     fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
         let data = self.data.read().unwrap();
         Ok(data.get(key).cloned())
     }
 
+    /// Delete a key-value pair from memory
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to delete
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the key existed and was deleted
+    /// * `Ok(false)` if the key did not exist
+    /// * `Err(String)` with an error message if the operation fails
     fn delete(&self, key: &str) -> Result<bool, String> {
         let mut data = self.data.write().unwrap();
         Ok(data.remove(key).is_some())
     }
 }
 
+/// SQLite-based persistent storage implementation
+///
+/// Provides a durable storage backend that persists data to a SQLite
+/// database file. This ensures data survival across node restarts
+/// and provides ACID guarantees for data operations.
 struct SqliteStorage {
+    /// Path to the SQLite database file
     db_path: PathBuf,
 }
 
 impl SqliteStorage {
+    /// Create a new SQLite storage instance
+    ///
+    /// # Arguments
+    ///
+    /// * `db_path` - Path to the SQLite database file
     fn new(db_path: PathBuf) -> Self {
         Self { db_path }
     }
 
+    /// Initialize the database schema
+    ///
+    /// Creates necessary tables and indexes if they don't exist.
+    /// Should be called before using the storage engine.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if successful
+    /// * `Err(String)` with an error message if initialization fails
     fn initialize_schema(&self) -> Result<(), String> {
         debug!("Initializing SQLite database schema at {:?}", self.db_path);
 
@@ -213,6 +449,17 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// Store a key-value pair in the SQLite database
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Unique identifier for the data
+    /// * `value` - JSON value to store
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if successful
+    /// * `Err(String)` with an error message if the operation fails
     async fn store(&self, key: String, value: Value) -> Result<(), String> {
         // Serialize the value to a JSON string
         let value_str = serde_json::to_string(&value)
@@ -245,6 +492,17 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// Retrieve a value by its key from the SQLite database
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Value))` if the key exists
+    /// * `Ok(None)` if the key does not exist
+    /// * `Err(String)` with an error message if the operation fails
     async fn retrieve(&self, key: &str) -> Result<Option<Value>, String> {
         let key_string = key.to_string();
         let db_path = self.db_path.clone();
@@ -284,6 +542,17 @@ impl SqliteStorage {
         Ok(result)
     }
 
+    /// Delete a key-value pair from the SQLite database
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to delete
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the key existed and was deleted
+    /// * `Ok(false)` if the key did not exist
+    /// * `Err(String)` with an error message if the operation fails
     async fn delete(&self, key: &str) -> Result<bool, String> {
         let key_for_logging = key.to_string();
         let key = key.to_string();
@@ -309,40 +578,85 @@ impl SqliteStorage {
     }
 }
 
-// State representation
+/// Application state shared across API handlers
+///
+/// Contains the core components and configuration needed by
+/// the API handlers to process requests.
 struct AppState {
+    /// Application configuration
     config: AppConfig,
+
+    /// Amount of tokens staked by this node (if any)
     staked_amount: Option<u64>,
+
+    /// Storage engine implementation
     storage: StorageEngine,
 }
 
-// API response structures
+/// Node status response for the API
+///
+/// Contains information about the node's current state,
+/// used by the status endpoint.
 #[derive(Serialize)]
 struct StatusResponse {
+    /// Unique identifier for this node
     node_id: String,
+
+    /// Current operational status
     status: String,
+
+    /// Version string
     version: String,
+
+    /// Time in seconds since the node started
     uptime: u64,
+
+    /// Number of connected peer nodes
     peers: u16,
+
+    /// Amount of storage used in bytes
     storage_used: u64,
+
+    /// Total storage capacity in bytes
     storage_total: u64,
+
+    /// Amount of tokens staked by this node (if any)
     staked_amount: Option<u64>,
 }
 
+/// Error response for the API
+///
+/// Used to return structured error information
+/// when an API request fails.
 #[derive(Serialize)]
 #[allow(dead_code)]
 struct ErrorResponse {
+    /// Error message
     error: String,
 }
 
-// Data response structure
+/// Data response for the API
+///
+/// Used to return data items with their keys.
 #[derive(Serialize, Deserialize)]
 struct DataResponse {
+    /// Key for the data item
     key: String,
+
+    /// The data item's content as JSON
     data: Value,
 }
 
-// Helper function to load configuration
+/// Load configuration from a TOML file
+///
+/// # Arguments
+///
+/// * `config_path` - Path to the configuration file
+///
+/// # Returns
+///
+/// * `Ok(AppConfig)` if the configuration was loaded successfully
+/// * `Err(ConfigError)` if the configuration could not be loaded
 #[allow(clippy::ptr_arg)]
 fn load_config(config_path: &PathBuf) -> Result<AppConfig, ConfigError> {
     let config = Config::builder()
@@ -352,7 +666,10 @@ fn load_config(config_path: &PathBuf) -> Result<AppConfig, ConfigError> {
     config.try_deserialize::<AppConfig>()
 }
 
-// API handlers
+/// API handler for the node status endpoint
+///
+/// Returns current information about the node's status,
+/// including uptime, connections, and storage usage.
 async fn status_handler(Extension(state): Extension<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let state = state.read().await;
 
@@ -371,6 +688,9 @@ async fn status_handler(Extension(state): Extension<Arc<RwLock<AppState>>>) -> i
     (StatusCode::OK, Json(status))
 }
 
+/// API handler for storing data
+///
+/// Stores a JSON value with the given key in the storage backend.
 async fn store_data_handler(
     Extension(state): Extension<Arc<RwLock<AppState>>>,
     AxumPath(key): AxumPath<String>,
@@ -388,6 +708,9 @@ async fn store_data_handler(
     }
 }
 
+/// API handler for retrieving data
+///
+/// Retrieves a JSON value by its key from the storage backend.
 async fn retrieve_data_handler(
     Extension(state): Extension<Arc<RwLock<AppState>>>,
     AxumPath(key): AxumPath<String>,
@@ -405,6 +728,9 @@ async fn retrieve_data_handler(
     }
 }
 
+/// API handler for deleting data
+///
+/// Deletes a key-value pair from the storage backend.
 async fn delete_data_handler(
     Extension(state): Extension<Arc<RwLock<AppState>>>,
     AxumPath(key): AxumPath<String>,
@@ -422,6 +748,9 @@ async fn delete_data_handler(
     }
 }
 
+/// API handler for listing connected peers
+///
+/// Returns a list of peer nodes connected to this node.
 async fn list_peers_handler(
     Extension(_state): Extension<Arc<RwLock<AppState>>>,
 ) -> impl IntoResponse {
@@ -429,7 +758,17 @@ async fn list_peers_handler(
     StatusCode::OK
 }
 
-// Setup the API routes
+/// Create the API router with all routes
+///
+/// Sets up all API endpoints and attaches the application state.
+///
+/// # Arguments
+///
+/// * `state` - Application state to be shared with all handlers
+///
+/// # Returns
+///
+/// An Axum Router configured with all API endpoints
 fn create_router(state: Arc<RwLock<AppState>>) -> Router {
     Router::new()
         .route("/api/v1/status", get(status_handler))
@@ -441,7 +780,19 @@ fn create_router(state: Arc<RwLock<AppState>>) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-// Initialize storage based on configuration
+/// Initialize the storage engine based on configuration
+///
+/// Creates and initializes the appropriate storage engine
+/// based on the configuration.
+///
+/// # Arguments
+///
+/// * `config` - Storage configuration
+///
+/// # Returns
+///
+/// * `Ok(StorageEngine)` if initialization was successful
+/// * `Err(anyhow::Error)` if initialization failed
 async fn init_storage(config: &StorageConfig) -> Result<StorageEngine, anyhow::Error> {
     // Create data directory if it doesn't exist
     tokio::fs::create_dir_all(&config.data_dir).await?;
@@ -481,7 +832,19 @@ async fn init_storage(config: &StorageConfig) -> Result<StorageEngine, anyhow::E
     }
 }
 
-// Initialize networking based on configuration
+/// Initialize networking based on configuration
+///
+/// Sets up networking connections to peer nodes and
+/// initializes the discovery mechanism.
+///
+/// # Arguments
+///
+/// * `config` - Network configuration
+///
+/// # Returns
+///
+/// * `Ok(())` if initialization was successful
+/// * `Err(anyhow::Error)` if initialization failed
 async fn init_networking(config: &NetworkConfig) -> Result<(), anyhow::Error> {
     // This would connect to bootstrap nodes, set up discovery, etc.
     info!(
@@ -501,7 +864,19 @@ async fn init_networking(config: &NetworkConfig) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-// Simulate staking process
+/// Process staking of tokens for node operation
+///
+/// Stakes the specified amount of tokens to participate
+/// in the DSM network and earn rewards.
+///
+/// # Arguments
+///
+/// * `amount` - Amount of tokens to stake
+///
+/// # Returns
+///
+/// * `Ok(())` if staking was successful
+/// * `Err(anyhow::Error)` if staking failed
 async fn process_staking(amount: u64) -> Result<(), anyhow::Error> {
     info!("Processing stake of {} tokens", amount);
 
@@ -518,6 +893,9 @@ async fn process_staking(amount: u64) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Main function for the DSM Storage Node
+///
+/// Initializes the system, loads configuration, and starts the API server.
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
     // Initialize tracing for logs

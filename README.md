@@ -237,6 +237,40 @@ This alpha release is intended to:
 
 See [SECURITY.md](SECURITY.md) for information about the security model and vulnerability reporting process.
 
+## Modular Backend Architecture
+
+DSM supports a modular architecture where the backend can be installed separately from applications. This allows multiple applications to connect to the same DSM instance, improving resource usage and maintaining consistent state.
+
+### Installation Options
+
+1. **Standalone Service**:
+   - Install the DSM backend as a system service
+   - Applications connect via local API endpoints
+   - Shared state between multiple applications
+
+2. **Embedded Library**:
+   - Bundle DSM as native libraries within applications
+   - Isolated state per application
+   - Works well for single-app deployments
+
+### Connection Methods
+
+Applications can connect to a standalone DSM backend via:
+- REST API for web applications
+- gRPC for native applications
+- Unix sockets for high-performance local communication
+- JNI/FFI for direct integration with native code
+
+### Configuration Example
+
+```bash
+# Install standalone DSM backend
+./scripts/install_dsm_service.sh
+
+# Configure an application to use existing backend
+echo "backend_url=http://localhost:7545" > myapp/config.json
+```
+
 ## License
 
 This project is licensed under either of

@@ -23,8 +23,8 @@ endpoint = "http://127.0.0.1:8080"
 [storage]
 engine = "sqlite"
 capacity = 10737418240  # 10 GB
-data_dir = "./data"
-database_path = "./data/storage.db"
+data_dir = "./data"  # This is relative to where you run the command
+database_path = "./data/storage.db"  # This is relative to where you run the command
 assignment_strategy = "DeterministicHashing"
 replication_strategy = "FixedReplicas"
 replica_count = 3
@@ -50,8 +50,8 @@ max_peers = 100
 
 # Security configuration
 [security]
-private_key_path = "./keys/node.key"
-public_key_path = "./keys/node.pub"
+private_key_path = "./keys/node.key"  # This is relative to where you run the command
+public_key_path = "./keys/node.pub"  # This is relative to where you run the command
 enable_tls = false
 tls_cert_path = "./keys/node.crt"
 tls_key_path = "./keys/node.key"
@@ -72,6 +72,6 @@ auto_compound = true
 # Logging configuration
 [logging]
 level = "debug"
-file_path = "./logs/node.log"
+file_path = "./logs/node.log"  # This is relative to where you run the command
 format = "text"
 console_logging = true

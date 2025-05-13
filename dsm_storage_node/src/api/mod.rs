@@ -1,6 +1,66 @@
-// API module for DSM Storage Node
+// DSM Storage Node API Module
 //
-// This module implements the HTTP API for the storage node
+// This module implements the HTTP REST API for the storage node, providing endpoints for data operations,
+// node management, and administrative functions. The API is built using the Axum framework and provides
+// a comprehensive set of endpoints for interacting with the DSM Storage Node.
+//
+// # API Endpoints
+//
+// The API is organized into several logical groups:
+//
+// * **Data Operations**: Core storage functionality (get, put, delete, list)
+// * **Inbox API**: Message delivery for unilateral transactions
+// * **Vault API**: Secure storage for sensitive data with access controls
+// * **Rewards API**: Integration with the DSM staking and rewards system
+// * **Node Management**: Status, configuration, and peer management
+//
+// # Authentication
+//
+// The API supports multiple authentication methods:
+// - API tokens
+// - Public key signatures
+// - Certificate-based authentication
+//
+// # Error Handling
+//
+// All API endpoints use standardized error responses with consistent status codes
+// and structured error messages to simplify client-side error handling.
+//
+// # Examples
+//
+// ## Basic Usage
+//
+// ```rust
+// use dsm_storage_node::api::ApiServer;
+// use dsm_storage_node::storage::SqliteStorageEngine;
+// use dsm_storage_node::staking::StakingService;
+// use std::sync::Arc;
+//
+// async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
+//     // Initialize storage and staking services
+//     let storage = Arc::new(SqliteStorageEngine::new("data/storage.db")?);
+//     let staking = Arc::new(StakingService::new(/* config */)?);
+//
+//     // Create and start API server
+//     let api = ApiServer::new(storage, staking, "127.0.0.1:8765".to_string());
+//     api.start().await?;
+//
+//     Ok(())
+// }
+// ```
+//
+// ## Using the API with curl
+//
+// ```bash
+// # Store data
+// curl -X POST -H "Content-Type: application/octet-stream" --data-binary "@file.bin" http://localhost:8765/data
+//
+// # Retrieve data
+// curl -X GET http://localhost:8765/data/b43f1d...
+//
+// # Check node status
+// curl -X GET http://localhost:8765/health
+// ```
 
 use crate::error::{Result, StorageNodeError};
 // Removed unused import
@@ -30,22 +90,35 @@ pub use rewards_api::*;
 pub use unilateral_api::*;
 pub use vault_api::*;
 
-/// Application state shared with all routes
+/// Application state shared with all routes.
+///
+/// This struct holds references to core components that are needed by
+/// request handlers, such as the storage engine and staking service.
+/// The state is cloned for each request but uses Arc internally to
+/// avoid expensive deep copies.
 #[derive(Clone)]
 pub struct AppState {
-    /// Storage engine
+    /// Storage engine for persisting and retrieving data
     pub storage: Arc<dyn crate::storage::StorageEngine + Send + Sync>,
-    /// Staking service
+    /// Staking service for rewards and validation
     pub staking_service: Arc<StakingService>,
 }
-/// API Error response
+
+/// API Error response model.
+///
+/// This struct provides a standardized format for all error responses
+/// from the API. It includes a human-readable message, a machine-readable
+/// error code, and optional structured details for more complex errors.
+///
+/// Error codes are mapped to appropriate HTTP status codes in the
+/// `IntoResponse` implementation.
 #[derive(Debug, Serialize)]
 pub struct ApiError {
-    /// Error message
+    /// Human-readable error message
     pub message: String,
-    /// Error code
+    /// Machine-readable error code (e.g., "NOT_FOUND", "BAD_REQUEST")
     pub code: String,
-    /// Optional additional details
+    /// Optional additional structured details about the error
     pub details: Option<serde_json::Value>,
 }
 
@@ -67,7 +140,10 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Convert StorageNodeError to an API error
+/// Convert StorageNodeError to an API error.
+///
+/// This implementation maps internal storage node errors to API-friendly
+/// error responses with appropriate status codes and messages.
 impl From<StorageNodeError> for ApiError {
     fn from(err: StorageNodeError) -> Self {
         let (code, message) = match err {
@@ -118,16 +194,53 @@ impl From<StorageNodeError> for ApiError {
     }
 }
 
-/// API Server
+/// The main API server for the DSM Storage Node.
+///
+/// This struct represents the HTTP server that exposes the storage node's
+/// functionality via a RESTful API. It handles initialization, routing, and
+/// starting the server on the specified address.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dsm_storage_node::api::ApiServer;
+/// use dsm_storage_node::storage::StorageEngine;
+/// use dsm_storage_node::staking::StakingService;
+/// use std::sync::Arc;
+///
+/// async fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let storage = Arc::new(StorageEngine::new(/* config */)?);
+///     let staking = Arc::new(StakingService::new(/* config */)?);
+///     
+///     let server = ApiServer::new(storage, staking, "127.0.0.1:8765".to_string());
+///     server.start().await?;
+///     
+///     Ok(())
+/// }
+/// ```
 pub struct ApiServer {
-    /// Application state
+    /// Application state shared with all request handlers
     app_state: Arc<AppState>,
-    /// Server bind address
+    /// Server bind address in the format "IP:port"
     bind_address: String,
 }
 
 impl ApiServer {
-    /// Create a new API server
+    /// Create a new API server instance.
+    ///
+    /// This constructor initializes the API server with the required dependencies
+    /// and prepares it for starting. It does not actually start the server -
+    /// call `start()` to begin serving requests.
+    ///
+    /// # Parameters
+    ///
+    /// * `storage` - An Arc-wrapped storage engine implementation
+    /// * `staking_service` - An Arc-wrapped staking service implementation
+    /// * `bind_address` - The address and port to bind the server to (e.g., "127.0.0.1:8765")
+    ///
+    /// # Returns
+    ///
+    /// A new `ApiServer` instance ready to be started
     pub fn new(
         storage: Arc<dyn crate::storage::StorageEngine + Send + Sync>,
         staking_service: Arc<StakingService>,
@@ -144,7 +257,17 @@ impl ApiServer {
         }
     }
 
-    /// Start the API server
+    /// Start the API server and begin serving requests.
+    ///
+    /// This method binds to the configured address and port, sets up the
+    /// HTTP server with all routes, and begins handling incoming requests.
+    /// It is an async method that doesn't return until the server is shut down
+    /// or encounters an error.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the server was successfully started and then gracefully shut down
+    /// * `Err` if there was an error starting or running the server
     pub async fn start(&self) -> Result<()> {
         // Create router with routes
         let app = self.create_router().layer(TraceLayer::new_for_http());
@@ -166,26 +289,35 @@ impl ApiServer {
         Ok(())
     }
 
-    /// Create the API router
+    /// Create the API router with all defined routes.
+    ///
+    /// This method defines all the HTTP endpoints for the API server,
+    /// including their HTTP methods, paths, and handler functions.
+    /// It also attaches the application state to the router.
+    ///
+    /// # Returns
+    ///
+    /// An Axum `Router` configured with all API endpoints
     fn create_router(&self) -> Router {
         // Build the router
         Router::new()
+            // Health and status endpoints
             .route("/health", get(handlers::health_check))
             .route("/stats", get(handlers::node_stats))
-            // General data storage
+            // General data storage endpoints
             .route("/data", post(handlers::store_data))
             .route("/data/:blinded_id", get(handlers::retrieve_data))
             .route("/data/:blinded_id", delete(handlers::delete_data))
             .route("/data/:blinded_id/exists", get(handlers::exists_data))
             .route("/data", get(handlers::list_data))
-            // Unilateral transaction inbox
+            // Unilateral transaction inbox endpoints
             .route("/inbox", post(store_inbox_entry))
             .route("/inbox/:recipient_genesis", get(get_inbox_entries))
             .route(
                 "/inbox/:recipient_genesis/:entry_id",
                 delete(delete_inbox_entry),
             )
-            // Vault API
+            // Vault API endpoints
             .route("/vault", post(store_vault))
             .route("/vault/:vault_id", get(get_vault))
             .route("/vault/creator/:creator_id", get(get_vaults_by_creator))
@@ -194,7 +326,7 @@ impl ApiServer {
                 get(get_vaults_by_recipient),
             )
             .route("/vault/:vault_id/status", put(update_vault_status))
-            // Rewards API
+            // Rewards API endpoints
             .merge(rewards_api::rewards_routes())
             // Share application state
             .with_state(self.app_state.clone())

@@ -710,6 +710,29 @@ impl DsmError {
             source: source.map(|e| Box::new(e) as Box<dyn Error + Send + Sync>),
         }
     }
+
+    /// Creates a new authorization error
+    ///
+    /// # Arguments
+    /// * `context` - Description of what was unauthorized
+    pub fn authorization(context: impl Into<String>) -> Self {
+        DsmError::Unauthorized {
+            context: context.into(),
+            source: None,
+        }
+    }
+
+    /// Creates a new cryptographic error with a more convenient alias
+    ///
+    /// # Arguments
+    /// * `context` - Description of the cryptographic error
+    /// * `source` - Optional source error that caused this error
+    pub fn cryptographic<E>(context: impl Into<String>, source: Option<E>) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self::crypto(context, source)
+    }
 }
 
 impl Display for DsmError {

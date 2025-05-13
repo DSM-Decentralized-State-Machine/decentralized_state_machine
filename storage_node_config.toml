@@ -1,0 +1,63 @@
+# DSM Storage Node Configuration
+
+# API configuration
+[api]
+bind_address = "127.0.0.1"
+port = 8766
+enable_cors = true
+enable_rate_limits = false
+max_body_size = 10485760  # 10 MB
+
+# Node information
+[node]
+id = "vault_hunter_node1"
+name = "DSM Vault Hunter Storage Node"
+region = "local-dev"
+operator = "Vault Hunter Development"
+version = "0.1.0"
+description = "Development storage node for Vault Hunter Game"
+endpoint = "http://127.0.0.1:8766"
+public_key = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnB7k7nWhYI1yj5IB/Vr5o8JqwhbotYYGnbgvvnb520ah6lA35mN1L1nbStx4uEpYOMlGqgU23KyHS7k5wDOxDO4Bk5utHvJ4W1hdPp9m6tO982Tb9h+rdgnVhjbyjtfJUFZFmxe00lrLvzJWqZmUmNmPONkUZpZIsjo5f8t0oIh27VB1jWqyDWEKfHrCOy/I7sAQkuHC35oEqEZr235B890uTbkrQ7pmXhpc7rbeyE7hWaf3zJdeK9lC93QCiMk6BSSLNTotooc3pQeFALUuA0o1Nd0tXccJk87p9V+f18TgWkuBmQ46VVPhgzlT/6XXMcD9NnOycXQl09iMpDJCfQIDAQAB"
+
+# Storage configuration
+[storage]
+engine = "sqlite"
+capacity = 1073741824  # 1 GB
+data_dir = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/data"
+database_path = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/data/storage.db"
+assignment_strategy = "DeterministicHashing"
+replication_strategy = "FixedReplicas"
+replica_count = 1
+min_regions = 1
+default_ttl = 0  # No expiration by default
+enable_pruning = true
+pruning_interval = 3600  # 1 hour
+
+# Network configuration
+[network]
+listen_addr = "0.0.0.0"
+public_endpoint = "http://localhost:8766"
+port = 8766
+max_connections = 100
+connection_timeout = 30
+bootstrap_nodes = []
+enable_discovery = false
+discovery_interval = 300
+max_peers = 10
+
+# Security configuration
+[security]
+private_key_path = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/keys/node.key"
+public_key_path = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/keys/node.pub"
+enable_tls = false
+require_auth = false
+authorized_keys_path = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/keys/authorized_keys.json"
+enable_rate_limits = false
+rate_limit = 1000
+
+# Logging configuration
+[logging]
+level = "info"
+file_path = "/Users/cryptskii/Desktop/claude_workspace/DSM_Project/DSM_Decentralized_State_Machine/logs/node.log"
+format = "text"
+console_logging = true

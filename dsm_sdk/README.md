@@ -51,7 +51,7 @@ dsm-sdk = { git = "https://github.com/dsm-project/decentralized-state-machine.gi
 
 2. Build the SDK:
    ```bash
-   cargo build --release -p dsm-sdk
+   cargo build --release -p dsm_sdk
    ```
 
 ## Usage Examples

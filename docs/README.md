@@ -34,6 +34,6 @@ For a quick start guide, please refer to the [GETTING_STARTED.md](../GETTING_STA
 
 For more information:
 - Visit [decentralizedstatemachine.com](https://decentralizedstatemachine.com)
-- Follow us on [X/Twitter](https://x.com/state_machine_)
+- Follow us on [X/Twitter](https://x.com/dsm_sovereign)
 - For help or commercial inquiries, email [info@decentralizedstatemachine.com](mailto:info@decentralizedstatemachine.com)
 - Join our [Developer Telegram](https://t.me/+agb3_DHBcCI5MTkx) for development support and questions
